@@ -177,9 +177,52 @@ make
 
 ### 文档完善
 - [x] 添加详细的使用文档
-- [ ] 添加 API 文档
-- [ ] 添加示例代码
+- [x] 添加 API 文档
+- [x] 添加示例代码
+  - [x] 基本转换示例
+  - [x] 批量转换示例
+  - [x] 动画处理示例
+  - [x] 实例化示例
 - [ ] 添加测试用例
+
+## 示例代码
+
+项目包含以下示例代码，位于 `examples` 目录：
+
+1. **基本转换** (basic_conversion.cpp)
+   - 演示最基本的OSGB到B3DM的转换
+   - 包含错误处理和进度输出
+
+2. **批量转换** (batch_conversion.cpp)
+   - 演示如何批量转换目录中的OSGB文件
+   - 使用多线程并行处理
+   - 包含详细的进度和统计信息
+
+3. **动画处理** (animation_example.cpp)
+   - 演示如何处理带有动画的OSGB模型
+   - 包含动画信息的提取和显示
+   - 展示动画数据的转换过程
+
+4. **实例化处理** (instancing_example.cpp)
+   - 演示如何创建和处理实例化模型
+   - 包含实例化场景的构建
+   - 展示实例化数据的转换过程
+
+### 编译示例
+
+```bash
+# 在项目根目录下
+mkdir build
+cd build
+cmake ..
+make
+
+# 运行示例
+./examples/basic_conversion input.osgb output.b3dm
+./examples/batch_conversion input_directory output_directory
+./examples/animation_example animated.osgb output.b3dm
+./examples/instancing_example base.osgb output.b3dm
+```
 
 ## 已知问题
 
