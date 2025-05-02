@@ -19,6 +19,10 @@
 #include <sstream>
 #include <zlib.h>
 #include <iostream>
+#include <filesystem>
+#include <unistd.h>
+
+namespace fs = std::filesystem;
 
 namespace osgb2b3dm {
 
@@ -45,6 +49,7 @@ void Osgb2B3dm::clearError() {
 
 bool Osgb2B3dm::convert(const std::string& inputPath, const std::string& outputPath) {
     clearError();
+    std::cout << "Starting conversion from " << inputPath << " to " << outputPath << std::endl;
 
     if (inputPath.empty()) {
         setError(ErrorCode::INVALID_INPUT, "Input path is empty");
@@ -56,25 +61,36 @@ bool Osgb2B3dm::convert(const std::string& inputPath, const std::string& outputP
         return false;
     }
 
+    std::cout << "Loading input file..." << std::endl;
     if (!loadInputFile(inputPath)) {
+        std::cerr << "Failed to load input file" << std::endl;
         return false;
     }
+    std::cout << "Input file loaded successfully" << std::endl;
 
     if (validateInput_ && !validateInput()) {
+        std::cerr << "Input validation failed" << std::endl;
         return false;
     }
 
+    std::cout << "Processing scene..." << std::endl;
     if (!processScene()) {
+        std::cerr << "Scene processing failed" << std::endl;
         return false;
     }
+    std::cout << "Scene processed successfully" << std::endl;
 
     if (validateOutput_ && !validateOutput()) {
+        std::cerr << "Output validation failed" << std::endl;
         return false;
     }
 
+    std::cout << "Saving output file..." << std::endl;
     if (!saveOutputFile(outputPath)) {
+        std::cerr << "Failed to save output file" << std::endl;
         return false;
     }
+    std::cout << "Output file saved successfully" << std::endl;
 
     return true;
 }
@@ -89,8 +105,8 @@ bool Osgb2B3dm::loadInputFile(const std::string& path) {
         }
 
         // 加载输入文件的实现
-        osg::ref_ptr<osg::Node> node = osgDB::readNodeFile(path);
-        if (!node) {
+        scene_ = osgDB::readNodeFile(path);
+        if (!scene_) {
             setError(ErrorCode::FILE_READ_ERROR, "Failed to read input file: " + path);
             return false;
         }
@@ -139,8 +155,22 @@ bool Osgb2B3dm::processScene() {
 
 bool Osgb2B3dm::saveOutputFile(const std::string& path) {
     try {
-        // 保存输出文件的实现
-        // ... existing code ...
+        // 准备 JSON 和二进制数据
+        nlohmann::json gltfJson;
+        std::vector<unsigned char> binaryData;
+
+        // 将场景数据转换为 glTF JSON 和二进制数据
+        if (!convertToGltf(gltfJson, binaryData)) {
+            setError(ErrorCode::CONVERSION_FAILED, "Failed to convert scene to glTF");
+            return false;
+        }
+
+        // 写入 B3DM 文件
+        if (!writeB3dm(path, gltfJson, binaryData)) {
+            setError(ErrorCode::FILE_WRITE_ERROR, "Failed to write B3DM file");
+            return false;
+        }
+
         return true;
     } catch (const std::exception& e) {
         setError(ErrorCode::FILE_WRITE_ERROR, std::string("Failed to save output file: ") + e.what());
@@ -1113,33 +1143,125 @@ std::vector<unsigned char> Osgb2B3dm::packBinaryData(const std::vector<float>& p
 
 bool Osgb2B3dm::writeB3dm(const std::string& path, const nlohmann::json& gltfJson,
                          const std::vector<unsigned char>& binaryData) {
+    std::cout << "Writing B3DM file to: " << path << std::endl;
+    
+    // 检查路径
+    if (path.empty()) {
+        std::cerr << "Output path is empty" << std::endl;
+        return false;
+    }
+
+    // 获取当前工作目录
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        std::cout << "Current working directory: " << cwd << std::endl;
+    }
+
+    // 尝试创建输出目录
+    fs::path outPath(path);
+    fs::path outDir = outPath.parent_path();
+    if (!outDir.empty()) {
+        std::error_code ec;
+        fs::create_directories(outDir, ec);
+        if (ec) {
+            std::cerr << "Failed to create output directory: " << ec.message() << std::endl;
+            return false;
+        }
+    }
+
+    // 打开文件
     std::ofstream out(path, std::ios::binary);
-    if (!out) return false;
+    if (!out) {
+        std::cerr << "Failed to open output file: " << path << std::endl;
+        std::cerr << "Current working directory: " << fs::current_path().string() << std::endl;
+        return false;
+    }
 
-    // B3DM 头部
-    const char magic[4] = {'b', '3', 'd', 'm'};
-    out.write(magic, 4);
+    try {
+        // 准备数据
+        std::string jsonStr = gltfJson.dump();
+        uint32_t jsonLength = jsonStr.size();
+        uint32_t binaryLength = binaryData.size();
+        uint32_t featureTableJSONByteLength = 0;
+        uint32_t featureTableBinaryByteLength = 0;
+        uint32_t batchTableJSONByteLength = 0;
+        uint32_t batchTableBinaryByteLength = 0;
+        uint32_t headerLength = 28;  // B3DM header size
 
-    // 版本
-    uint32_t version = 1;
-    out.write(reinterpret_cast<const char*>(&version), 4);
+        // 计算总长度
+        uint32_t totalLength = headerLength + 
+                             featureTableJSONByteLength +
+                             featureTableBinaryByteLength +
+                             batchTableJSONByteLength +
+                             batchTableBinaryByteLength +
+                             jsonLength + 
+                             binaryLength;
 
-    // 计算总长度
-    std::string jsonStr = gltfJson.dump();
-    uint32_t totalLength = 28 + jsonStr.size() + binaryData.size();
-    out.write(reinterpret_cast<const char*>(&totalLength), 4);
+        // B3DM 头部
+        const char magic[4] = {'b', '3', 'd', 'm'};
+        out.write(magic, 4);
+        if (!out) throw std::runtime_error("Failed to write magic number");
+        std::cout << "Wrote magic number" << std::endl;
 
-    // JSON 长度
-    uint32_t jsonLength = jsonStr.size();
-    out.write(reinterpret_cast<const char*>(&jsonLength), 4);
+        // 版本
+        uint32_t version = 1;
+        out.write(reinterpret_cast<const char*>(&version), 4);
+        if (!out) throw std::runtime_error("Failed to write version");
+        std::cout << "Wrote version" << std::endl;
 
-    // 写入 JSON
-    out.write(jsonStr.c_str(), jsonStr.size());
+        // 总长度
+        out.write(reinterpret_cast<const char*>(&totalLength), 4);
+        if (!out) throw std::runtime_error("Failed to write total length");
+        std::cout << "Wrote total length: " << totalLength << std::endl;
 
-    // 写入二进制数据
-    out.write(reinterpret_cast<const char*>(binaryData.data()), binaryData.size());
+        // Feature Table JSON 长度
+        out.write(reinterpret_cast<const char*>(&featureTableJSONByteLength), 4);
+        if (!out) throw std::runtime_error("Failed to write Feature Table JSON length");
 
-    return true;
+        // Feature Table Binary 长度
+        out.write(reinterpret_cast<const char*>(&featureTableBinaryByteLength), 4);
+        if (!out) throw std::runtime_error("Failed to write Feature Table Binary length");
+
+        // Batch Table JSON 长度
+        out.write(reinterpret_cast<const char*>(&batchTableJSONByteLength), 4);
+        if (!out) throw std::runtime_error("Failed to write Batch Table JSON length");
+
+        // Batch Table Binary 长度
+        out.write(reinterpret_cast<const char*>(&batchTableBinaryByteLength), 4);
+        if (!out) throw std::runtime_error("Failed to write Batch Table Binary length");
+
+        // 写入 JSON
+        out.write(jsonStr.c_str(), jsonLength);
+        if (!out) throw std::runtime_error("Failed to write JSON data");
+        std::cout << "Wrote JSON data" << std::endl;
+
+        // 写入二进制数据
+        out.write(reinterpret_cast<const char*>(binaryData.data()), binaryLength);
+        if (!out) throw std::runtime_error("Failed to write binary data");
+        std::cout << "Wrote binary data: " << binaryLength << " bytes" << std::endl;
+
+        out.close();
+        if (!out) throw std::runtime_error("Failed to close file");
+
+        // 验证文件是否成功写入
+        if (!fs::exists(path)) {
+            throw std::runtime_error("File does not exist after writing");
+        }
+        if (fs::file_size(path) != totalLength) {
+            std::cerr << "Expected file size: " << totalLength << ", actual file size: " << fs::file_size(path) << std::endl;
+            throw std::runtime_error("File size mismatch after writing");
+        }
+
+        std::cout << "Successfully wrote B3DM file" << std::endl;
+        return true;
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Error writing B3DM file: " << e.what() << std::endl;
+        out.close();
+        // 如果写入失败，删除可能部分写入的文件
+        fs::remove(path);
+        return false;
+    }
 }
 
 void Osgb2B3dm::extractMaterialProperties(osg::StateSet* stateSet, Material& material) {
@@ -1640,6 +1762,332 @@ void Osgb2B3dm::addInstanceMeshesToGltf(nlohmann::json& gltf, const InstanceGrou
 
         mesh["primitives"].push_back(primitive);
         gltf["meshes"].push_back(mesh);
+    }
+}
+
+bool Osgb2B3dm::convertToGltf(nlohmann::json& gltfJson, std::vector<unsigned char>& binaryData) {
+    try {
+        if (!scene_) {
+            setError(ErrorCode::CONVERSION_FAILED, "No scene loaded");
+            return false;
+        }
+
+        // 创建基本的 glTF 结构
+        gltfJson = {
+            {"asset", {
+                {"version", "2.0"},
+                {"generator", "osgb2b3dm"}
+            }},
+            {"scenes", {{
+                {"nodes", {0}}
+            }}},
+            {"scene", 0},
+            {"nodes", {}},
+            {"meshes", {}},
+            {"materials", {}},
+            {"buffers", {}},
+            {"bufferViews", {}},
+            {"accessors", {}}
+        };
+
+        // 处理场景节点
+        osg::ref_ptr<osg::Group> root = scene_->asGroup();
+        if (!root) {
+            setError(ErrorCode::CONVERSION_FAILED, "Root node is not a group");
+            return false;
+        }
+
+        // 处理节点
+        for (unsigned int i = 0; i < root->getNumChildren(); ++i) {
+            osg::Node* child = root->getChild(i);
+            if (!processNode(child, gltfJson, binaryData)) {
+                return false;
+            }
+        }
+
+        // 处理动画
+        if (!_animations.empty()) {
+            gltfJson["animations"] = nlohmann::json::array();
+            for (const auto& anim : _animations) {
+                if (!processAnimation(anim, gltfJson)) {
+                    return false;
+                }
+            }
+        }
+
+        // 处理实例化
+        if (!_instanceGroups.empty()) {
+            for (const auto& group : _instanceGroups) {
+                if (!processInstanceGroup(group, gltfJson)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        setError(ErrorCode::CONVERSION_FAILED, std::string("Failed to convert to glTF: ") + e.what());
+        return false;
+    }
+}
+
+bool Osgb2B3dm::processNode(osg::Node* node, nlohmann::json& gltfJson, std::vector<unsigned char>& binaryData) {
+    try {
+        if (!node) return true;
+
+        nlohmann::json nodeJson;
+        nodeJson["name"] = node->getName();
+
+        // 处理变换
+        osg::MatrixTransform* transform = dynamic_cast<osg::MatrixTransform*>(node);
+        if (transform) {
+            osg::Matrix matrix = transform->getMatrix();
+            std::vector<double> matrixArray;
+            matrixArray.reserve(16);
+            for (int i = 0; i < 4; ++i) {
+                for (int j = 0; j < 4; ++j) {
+                    matrixArray.push_back(matrix(i,j));
+                }
+            }
+            nodeJson["matrix"] = matrixArray;
+        }
+
+        // 处理几何体
+        osg::Geode* geode = dynamic_cast<osg::Geode*>(node);
+        if (geode) {
+            for (unsigned int i = 0; i < geode->getNumDrawables(); ++i) {
+                osg::Geometry* geometry = dynamic_cast<osg::Geometry*>(geode->getDrawable(i));
+                if (geometry) {
+                    int meshIndex = processMesh(geometry, gltfJson, binaryData);
+                    if (meshIndex >= 0) {
+                        nodeJson["mesh"] = meshIndex;
+                    }
+                }
+            }
+        }
+
+        // 处理子节点
+        osg::Group* group = node->asGroup();
+        if (group) {
+            std::vector<int> children;
+            for (unsigned int i = 0; i < group->getNumChildren(); ++i) {
+                osg::Node* child = group->getChild(i);
+                if (processNode(child, gltfJson, binaryData)) {
+                    children.push_back(gltfJson["nodes"].size());
+                }
+            }
+            if (!children.empty()) {
+                nodeJson["children"] = children;
+            }
+        }
+
+        gltfJson["nodes"].push_back(nodeJson);
+        return true;
+    } catch (const std::exception& e) {
+        setError(ErrorCode::CONVERSION_FAILED, std::string("Failed to process node: ") + e.what());
+        return false;
+    }
+}
+
+int Osgb2B3dm::processMesh(osg::Geometry* geometry, nlohmann::json& gltfJson, std::vector<unsigned char>& binaryData) {
+    try {
+        if (!geometry) return -1;
+
+        nlohmann::json meshJson;
+        nlohmann::json primitiveJson;
+
+        // 处理顶点数据
+        osg::Vec3Array* vertices = dynamic_cast<osg::Vec3Array*>(geometry->getVertexArray());
+        if (vertices) {
+            size_t byteOffset = binaryData.size();
+            size_t byteLength = vertices->size() * sizeof(float) * 3;
+            
+            // 添加顶点数据到二进制缓冲区
+            binaryData.resize(byteOffset + byteLength);
+            memcpy(binaryData.data() + byteOffset, vertices->getDataPointer(), byteLength);
+
+            // 创建 bufferView
+            nlohmann::json bufferViewJson;
+            bufferViewJson["buffer"] = 0;
+            bufferViewJson["byteOffset"] = byteOffset;
+            bufferViewJson["byteLength"] = byteLength;
+            bufferViewJson["target"] = 34962; // ARRAY_BUFFER
+            int bufferViewIndex = gltfJson["bufferViews"].size();
+            gltfJson["bufferViews"].push_back(bufferViewJson);
+
+            // 创建 accessor
+            nlohmann::json accessorJson;
+            accessorJson["bufferView"] = bufferViewIndex;
+            accessorJson["componentType"] = 5126; // FLOAT
+            accessorJson["count"] = vertices->size();
+            accessorJson["type"] = "VEC3";
+            int accessorIndex = gltfJson["accessors"].size();
+            gltfJson["accessors"].push_back(accessorJson);
+
+            primitiveJson["attributes"]["POSITION"] = accessorIndex;
+        }
+
+        // 处理法线数据
+        osg::Vec3Array* normals = dynamic_cast<osg::Vec3Array*>(geometry->getNormalArray());
+        if (normals) {
+            size_t byteOffset = binaryData.size();
+            size_t byteLength = normals->size() * sizeof(float) * 3;
+            
+            binaryData.resize(byteOffset + byteLength);
+            memcpy(binaryData.data() + byteOffset, normals->getDataPointer(), byteLength);
+
+            nlohmann::json bufferViewJson;
+            bufferViewJson["buffer"] = 0;
+            bufferViewJson["byteOffset"] = byteOffset;
+            bufferViewJson["byteLength"] = byteLength;
+            bufferViewJson["target"] = 34962; // ARRAY_BUFFER
+            int bufferViewIndex = gltfJson["bufferViews"].size();
+            gltfJson["bufferViews"].push_back(bufferViewJson);
+
+            nlohmann::json accessorJson;
+            accessorJson["bufferView"] = bufferViewIndex;
+            accessorJson["componentType"] = 5126; // FLOAT
+            accessorJson["count"] = normals->size();
+            accessorJson["type"] = "VEC3";
+            int accessorIndex = gltfJson["accessors"].size();
+            gltfJson["accessors"].push_back(accessorJson);
+
+            primitiveJson["attributes"]["NORMAL"] = accessorIndex;
+        }
+
+        // 处理纹理坐标
+        osg::Vec2Array* texcoords = dynamic_cast<osg::Vec2Array*>(geometry->getTexCoordArray(0));
+        if (texcoords) {
+            size_t byteOffset = binaryData.size();
+            size_t byteLength = texcoords->size() * sizeof(float) * 2;
+            
+            binaryData.resize(byteOffset + byteLength);
+            memcpy(binaryData.data() + byteOffset, texcoords->getDataPointer(), byteLength);
+
+            nlohmann::json bufferViewJson;
+            bufferViewJson["buffer"] = 0;
+            bufferViewJson["byteOffset"] = byteOffset;
+            bufferViewJson["byteLength"] = byteLength;
+            bufferViewJson["target"] = 34962; // ARRAY_BUFFER
+            int bufferViewIndex = gltfJson["bufferViews"].size();
+            gltfJson["bufferViews"].push_back(bufferViewJson);
+
+            nlohmann::json accessorJson;
+            accessorJson["bufferView"] = bufferViewIndex;
+            accessorJson["componentType"] = 5126; // FLOAT
+            accessorJson["count"] = texcoords->size();
+            accessorJson["type"] = "VEC2";
+            int accessorIndex = gltfJson["accessors"].size();
+            gltfJson["accessors"].push_back(accessorJson);
+
+            primitiveJson["attributes"]["TEXCOORD_0"] = accessorIndex;
+        }
+
+        // 处理索引数据
+        osg::DrawElementsUInt* indices = dynamic_cast<osg::DrawElementsUInt*>(geometry->getPrimitiveSet(0));
+        if (indices) {
+            size_t byteOffset = binaryData.size();
+            size_t byteLength = indices->size() * sizeof(unsigned int);
+            
+            binaryData.resize(byteOffset + byteLength);
+            memcpy(binaryData.data() + byteOffset, indices->getDataPointer(), byteLength);
+
+            nlohmann::json bufferViewJson;
+            bufferViewJson["buffer"] = 0;
+            bufferViewJson["byteOffset"] = byteOffset;
+            bufferViewJson["byteLength"] = byteLength;
+            bufferViewJson["target"] = 34963; // ELEMENT_ARRAY_BUFFER
+            int bufferViewIndex = gltfJson["bufferViews"].size();
+            gltfJson["bufferViews"].push_back(bufferViewJson);
+
+            nlohmann::json accessorJson;
+            accessorJson["bufferView"] = bufferViewIndex;
+            accessorJson["componentType"] = 5125; // UNSIGNED_INT
+            accessorJson["count"] = indices->size();
+            accessorJson["type"] = "SCALAR";
+            int accessorIndex = gltfJson["accessors"].size();
+            gltfJson["accessors"].push_back(accessorJson);
+
+            primitiveJson["indices"] = accessorIndex;
+        }
+
+        // 处理材质
+        osg::StateSet* stateSet = geometry->getStateSet();
+        if (stateSet) {
+            int materialIndex = processMaterial(stateSet, gltfJson);
+            if (materialIndex >= 0) {
+                primitiveJson["material"] = materialIndex;
+            }
+        }
+
+        meshJson["primitives"] = {primitiveJson};
+        int meshIndex = gltfJson["meshes"].size();
+        gltfJson["meshes"].push_back(meshJson);
+
+        return meshIndex;
+    } catch (const std::exception& e) {
+        setError(ErrorCode::CONVERSION_FAILED, std::string("Failed to process mesh: ") + e.what());
+        return -1;
+    }
+}
+
+int Osgb2B3dm::processMaterial(osg::StateSet* stateSet, nlohmann::json& gltfJson) {
+    try {
+        if (!stateSet) return -1;
+
+        nlohmann::json materialJson;
+        materialJson["pbrMetallicRoughness"] = {
+            {"baseColorFactor", {1.0, 1.0, 1.0, 1.0}},
+            {"metallicFactor", 0.0},
+            {"roughnessFactor", 1.0}
+        };
+
+        osg::Material* material = dynamic_cast<osg::Material*>(
+            stateSet->getAttribute(osg::StateAttribute::MATERIAL));
+        if (material) {
+            osg::Vec4 diffuse = material->getDiffuse(osg::Material::FRONT);
+            materialJson["pbrMetallicRoughness"]["baseColorFactor"] = {
+                diffuse.r(), diffuse.g(), diffuse.b(), diffuse.a()
+            };
+        }
+
+        int materialIndex = gltfJson["materials"].size();
+        gltfJson["materials"].push_back(materialJson);
+
+        return materialIndex;
+    } catch (const std::exception& e) {
+        setError(ErrorCode::CONVERSION_FAILED, std::string("Failed to process material: ") + e.what());
+        return -1;
+    }
+}
+
+bool Osgb2B3dm::processAnimation(const Animation& anim, nlohmann::json& gltfJson) {
+    try {
+        nlohmann::json animationJson;
+        animationJson["name"] = anim.name;
+        animationJson["channels"] = nlohmann::json::array();
+        animationJson["samplers"] = nlohmann::json::array();
+
+        // 添加动画数据
+        gltfJson["animations"].push_back(animationJson);
+        return true;
+    } catch (const std::exception& e) {
+        setError(ErrorCode::CONVERSION_FAILED, std::string("Failed to process animation: ") + e.what());
+        return false;
+    }
+}
+
+bool Osgb2B3dm::processInstanceGroup(const InstanceGroup& group, nlohmann::json& gltfJson) {
+    try {
+        nlohmann::json nodeJson;
+        nodeJson["name"] = group.name;
+
+        // 添加实例化数据
+        gltfJson["nodes"].push_back(nodeJson);
+        return true;
+    } catch (const std::exception& e) {
+        setError(ErrorCode::CONVERSION_FAILED, std::string("Failed to process instance group: ") + e.what());
+        return false;
     }
 }
 }

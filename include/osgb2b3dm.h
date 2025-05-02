@@ -93,6 +93,13 @@ protected:
     // 内部实现
     bool loadInputFile(const std::string& path);
     bool saveOutputFile(const std::string& path);
+    bool convertToGltf(nlohmann::json& gltfJson, std::vector<unsigned char>& binaryData);
+    bool writeB3dm(const std::string& path, const nlohmann::json& gltfJson, const std::vector<unsigned char>& binaryData);
+    bool processNode(osg::Node* node, nlohmann::json& gltfJson, std::vector<unsigned char>& binaryData);
+    int processMesh(osg::Geometry* geometry, nlohmann::json& gltfJson, std::vector<unsigned char>& binaryData);
+    int processMaterial(osg::StateSet* stateSet, nlohmann::json& gltfJson);
+    bool processAnimation(const Animation& anim, nlohmann::json& gltfJson);
+    bool processInstanceGroup(const InstanceGroup& group, nlohmann::json& gltfJson);
 
     // 错误处理
     void setError(ErrorCode code, const std::string& message = "");
@@ -105,6 +112,11 @@ private:
     bool verbose_ = false;
     bool validateInput_ = true;
     bool validateOutput_ = true;
+
+    // 场景数据
+    osg::ref_ptr<osg::Node> scene_;
+    std::vector<Animation> _animations;
+    std::vector<InstanceGroup> _instanceGroups;
 
     // 材质结构体
     struct Material {
@@ -267,10 +279,6 @@ private:
                                    const osg::BoundingBox& bbox,
                                    const std::vector<std::string>& texturePaths);
 
-    // 生成 B3DM 文件
-    bool writeB3dm(const std::string& path, const nlohmann::json& gltfJson,
-                  const std::vector<unsigned char>& binaryData);
-
     // 打包二进制数据
     std::vector<unsigned char> packBinaryData(const std::vector<float>& positions,
                                             const std::vector<float>& normals,
@@ -325,7 +333,6 @@ private:
     void addInstanceMeshesToGltf(nlohmann::json& gltf, const InstanceGroup& group);
 
     std::vector<Material> _materials;  // 存储提取的材质
-    std::vector<Animation> _animations; // 存储提取的动画
     std::vector<AnimationChannel> _animationChannels; // 存储动画通道
     std::vector<AnimationSampler> _animationSamplers; // 存储动画采样器
     std::vector<MorphTarget> _morphTargets; // 存储变形目标
@@ -334,7 +341,6 @@ private:
     std::vector<SkeletonAnimationChannel> _skeletonChannels;
     std::vector<AnimationMixer> _animationMixers;
     std::vector<SkinData> _skinData;
-    std::vector<InstanceGroup> _instanceGroups;  // 存储实例化组
 };
 
 } // namespace osgb2b3dm

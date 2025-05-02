@@ -1,58 +1,40 @@
 cmake_minimum_required(VERSION 3.10)
 project(osgb2b3dm)
 
-# 设置 CMake 策略
-cmake_policy(SET CMP0079 NEW)
-
-# 设置 C++ 标准
-set(CMAKE_CXX_STANDARD 11)
+# 设置 C++17 标准
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 查找依赖
-find_package(OpenSceneGraph REQUIRED COMPONENTS 
-    osg 
-    osgDB 
-    osgAnimation 
-    osgUtil 
-    OpenThreads
-)
-find_package(nlohmann_json REQUIRED)
-find_package(GTest REQUIRED)
+# 查找依赖包
+find_package(OpenSceneGraph REQUIRED COMPONENTS osg osgDB osgUtil osgAnimation)
 find_package(ZLIB REQUIRED)
 
-# 添加包含目录
-include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${OPENSCENEGRAPH_INCLUDE_DIRS}
-)
-
-# 添加编译定义
-add_definitions(-DOSG_ANIMATION_SUPPORT=1)
-
-# 创建库
+# 添加库目标
 add_library(osgb2b3dm_lib
     src/osgb2b3dm.cpp
     src/osgb2b3dm_error.cpp
 )
 
-# 链接库
-target_link_libraries(osgb2b3dm_lib
+# 设置库的包含目录
+target_include_directories(osgb2b3dm_lib PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${OPENSCENEGRAPH_INCLUDE_DIRS}
+    ${ZLIB_INCLUDE_DIRS}
+)
+
+# 链接依赖库
+target_link_libraries(osgb2b3dm_lib PUBLIC
     ${OPENSCENEGRAPH_LIBRARIES}
-    nlohmann_json::nlohmann_json
-    ZLIB::ZLIB
+    ${ZLIB_LIBRARIES}
 )
 
-# 添加命令行工具
-add_executable(osgb2b3dm_cli
-    src/main.cpp
-)
+# 添加可执行文件
+add_executable(osgb2b3dm_cli src/main.cpp)
+target_link_libraries(osgb2b3dm_cli PRIVATE osgb2b3dm_lib)
 
-target_link_libraries(osgb2b3dm_cli
-    osgb2b3dm_lib
-    ${OPENSCENEGRAPH_LIBRARIES}
-)
-
-# 添加测试和示例
-enable_testing()
-add_subdirectory(tests)
+# 添加子目录
 add_subdirectory(examples)
+add_subdirectory(tests)
+
+# 启用测试
+enable_testing()
