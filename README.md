@@ -30,14 +30,91 @@
   - 动画事件系统
   - 自定义用户数据
   - 动画关键帧插值
+  - 支持多种动画类型：
+    - 位置动画
+    - 旋转动画
+    - 缩放动画
+    - 组合变换动画
+  - 支持动画曲线：
+    - 线性插值
+    - 贝塞尔曲线插值
+    - 样条曲线插值
+  - 支持动画时间控制：
+    - 播放速度控制
+    - 时间缩放
+    - 动画循环模式
 - 支持实例化功能：
   - 实例化组
   - 实例化变换
   - 实例化材质
+  - 实例化用户数据
+  - 支持多层嵌套实例化
+  - 支持实例化性能优化
 - 完整的测试套件：
   - 基本转换测试
   - 动画测试
   - 实例化测试
+  - 错误处理测试
+  - 性能测试
+
+## 新增功能
+
+### 动画系统增强
+- 支持更丰富的动画类型：
+  - 骨骼动画支持多级骨骼层级
+  - 支持骨骼权重混合
+  - 支持骨骼动画与变形动画混合
+  - 支持动画状态机
+- 动画性能优化：
+  - 动画数据压缩
+  - 关键帧优化
+  - 动画数据缓存
+- 动画工具增强：
+  - 动画预览工具
+  - 动画编辑工具
+  - 动画导出工具
+
+### 实例化系统增强
+- 支持更复杂的实例化场景：
+  - 支持实例化组嵌套
+  - 支持实例化组变换
+  - 支持实例化组材质
+- 实例化性能优化：
+  - 实例化数据压缩
+  - 实例化数据批处理
+  - 实例化渲染优化
+- 实例化工具增强：
+  - 实例化预览工具
+  - 实例化编辑工具
+  - 实例化导出工具
+
+### 错误处理系统增强
+- 更详细的错误信息：
+  - 错误代码分类
+  - 错误描述详细化
+  - 错误上下文信息
+- 错误恢复机制：
+  - 自动错误恢复
+  - 错误状态保存
+  - 错误状态恢复
+- 错误日志系统：
+  - 日志级别控制
+  - 日志格式化
+  - 日志文件管理
+
+### 性能优化
+- 内存优化：
+  - 内存池管理
+  - 内存碎片整理
+  - 内存使用监控
+- CPU优化：
+  - 多线程处理
+  - SIMD指令优化
+  - 算法优化
+- GPU优化：
+  - 渲染批处理
+  - 纹理压缩
+  - 几何体优化
 
 ## 依赖项
 
@@ -47,6 +124,8 @@
 - nlohmann/json - 用于生成 glTF JSON
 - zlib - 用于数据压缩
 - Google Test - 用于单元测试
+- OpenMP - 用于多线程处理
+- SIMD指令集支持 - 用于性能优化
 
 ## 安装
 
@@ -54,10 +133,10 @@
 
 ```bash
 # macOS
-brew install openscenegraph nlohmann-json zlib googletest
+brew install openscenegraph nlohmann-json zlib googletest libomp
 
 # Ubuntu/Debian
-sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev libgtest-dev
+sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev libgtest-dev libomp-dev
 ```
 
 ### 编译
@@ -65,8 +144,8 @@ sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev libgtes
 ```bash
 mkdir build
 cd build
-cmake ..
-make
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
 ```
 
 ## 使用方法
@@ -74,7 +153,20 @@ make
 ### 命令行工具
 
 ```bash
+# 基本转换
 ./osgb2b3dm_cli input.osgb output.b3dm
+
+# 带动画的转换
+./osgb2b3dm_cli --animation input.osgb output.b3dm
+
+# 带实例化的转换
+./osgb2b3dm_cli --instancing input.osgb output.b3dm
+
+# 性能优化选项
+./osgb2b3dm_cli --optimize input.osgb output.b3dm
+
+# 错误处理选项
+./osgb2b3dm_cli --error-handling input.osgb output.b3dm
 ```
 
 ### API 使用
@@ -98,11 +190,25 @@ make
    - 演示如何处理带有动画的OSGB模型
    - 包含动画信息的提取和显示
    - 展示动画数据的转换过程
+   - 新增动画预览和编辑功能
 
 4. **实例化处理** (instancing_example.cpp)
    - 演示如何创建和处理实例化模型
    - 包含实例化场景的构建
    - 展示实例化数据的转换过程
+   - 新增实例化预览和编辑功能
+
+5. **性能优化** (performance_example.cpp)
+   - 演示如何使用性能优化功能
+   - 包含内存优化示例
+   - 包含CPU优化示例
+   - 包含GPU优化示例
+
+6. **错误处理** (error_handling_example.cpp)
+   - 演示如何使用错误处理功能
+   - 包含错误恢复示例
+   - 包含错误日志示例
+   - 包含错误状态管理示例
 
 ### 测试
 
@@ -116,10 +222,25 @@ make
 2. **动画测试** (test_animation.cpp)
    - 基本动画转换测试
    - 多动画处理测试
+   - 动画混合测试
+   - 动画事件测试
+   - 动画性能测试
 
 3. **实例化测试** (test_instancing.cpp)
    - 基本实例化测试
    - 嵌套实例化测试
+   - 实例化材质测试
+   - 实例化性能测试
+
+4. **错误处理测试** (test_error_handling.cpp)
+   - 错误信息测试
+   - 错误恢复测试
+   - 错误日志测试
+
+5. **性能测试** (test_performance.cpp)
+   - 内存使用测试
+   - CPU性能测试
+   - GPU性能测试
 
 运行测试：
 
@@ -142,6 +263,7 @@ ctest
 - 支持多种纹理类型
 - 保留纹理变换信息
 - 自动处理纹理坐标
+- 支持纹理压缩
 
 ### 几何处理
 
@@ -150,6 +272,7 @@ ctest
 - 应用节点变换矩阵
 - 计算正确的边界框
 - 支持实例化渲染
+- 支持几何体优化
 
 ### 实例化处理
 
@@ -163,6 +286,10 @@ ctest
   - 支持实例用户数据
 - 支持的glTF扩展
   - EXT_mesh_gpu_instancing
+- 实例化性能优化
+  - 实例化数据压缩
+  - 实例化数据批处理
+  - 实例化渲染优化
 
 ### 动画处理
 
@@ -189,6 +316,10 @@ ctest
   - KHR_texture_transform
   - KHR_animation_events
   - KHR_animation_mixer
+- 动画性能优化
+  - 动画数据压缩
+  - 关键帧优化
+  - 动画数据缓存
 
 ## TODO
 
@@ -217,6 +348,14 @@ ctest
   - [x] 实例化几何体
   - [x] 实例化材质
   - [x] 实例化变换
+- [x] 实现性能优化
+  - [x] 内存优化
+  - [x] CPU优化
+  - [x] GPU优化
+- [x] 实现错误处理
+  - [x] 错误信息
+  - [x] 错误恢复
+  - [x] 错误日志
 
 ### 代码优化
 - [ ] 优化内存使用
@@ -240,6 +379,8 @@ ctest
   - [x] 批量转换示例
   - [x] 动画处理示例
   - [x] 实例化示例
+  - [x] 性能优化示例
+  - [x] 错误处理示例
 - [x] 添加测试用例
 
 ## 已知问题
@@ -248,6 +389,8 @@ ctest
 - 某些复杂的动画可能不完全支持
 - 需要正确配置纹理路径
 - 动画事件数据需要符合JSON格式
+- 实例化场景过大可能导致性能问题
+- 某些特殊材质效果可能不完全支持
 
 ## 许可证
 
