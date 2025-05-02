@@ -30,6 +30,14 @@
   - 动画事件系统
   - 自定义用户数据
   - 动画关键帧插值
+- 支持实例化功能：
+  - 实例化组
+  - 实例化变换
+  - 实例化材质
+- 完整的测试套件：
+  - 基本转换测试
+  - 动画测试
+  - 实例化测试
 
 ## 依赖项
 
@@ -38,6 +46,7 @@
   - 需要支持 osgAnimation
 - nlohmann/json - 用于生成 glTF JSON
 - zlib - 用于数据压缩
+- Google Test - 用于单元测试
 
 ## 安装
 
@@ -45,10 +54,10 @@
 
 ```bash
 # macOS
-brew install openscenegraph nlohmann-json zlib
+brew install openscenegraph nlohmann-json zlib googletest
 
 # Ubuntu/Debian
-sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev
+sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev libgtest-dev
 ```
 
 ### 编译
@@ -62,14 +71,62 @@ make
 
 ## 使用方法
 
+### 命令行工具
+
 ```bash
-./osgb2b3dm input.osgb output.b3dm
+./osgb2b3dm_cli input.osgb output.b3dm
 ```
 
-### 参数说明
+### API 使用
 
-- `input.osgb` - 输入的 OSGB 文件路径
-- `output.b3dm` - 输出的 B3DM 文件路径
+详细 API 文档请参考 [API.md](API.md)。
+
+### 示例代码
+
+项目包含以下示例代码，位于 `examples` 目录：
+
+1. **基本转换** (basic_conversion.cpp)
+   - 演示最基本的OSGB到B3DM的转换
+   - 包含错误处理和进度输出
+
+2. **批量转换** (batch_conversion.cpp)
+   - 演示如何批量转换目录中的OSGB文件
+   - 使用多线程并行处理
+   - 包含详细的进度和统计信息
+
+3. **动画处理** (animation_example.cpp)
+   - 演示如何处理带有动画的OSGB模型
+   - 包含动画信息的提取和显示
+   - 展示动画数据的转换过程
+
+4. **实例化处理** (instancing_example.cpp)
+   - 演示如何创建和处理实例化模型
+   - 包含实例化场景的构建
+   - 展示实例化数据的转换过程
+
+### 测试
+
+项目包含完整的测试套件，位于 `tests` 目录：
+
+1. **基本转换测试** (test_osgb2b3dm.cpp)
+   - 简单几何体转换测试
+   - 空场景转换测试
+   - 无效输入处理测试
+
+2. **动画测试** (test_animation.cpp)
+   - 基本动画转换测试
+   - 多动画处理测试
+
+3. **实例化测试** (test_instancing.cpp)
+   - 基本实例化测试
+   - 嵌套实例化测试
+
+运行测试：
+
+```bash
+cd build
+ctest
+```
 
 ## 实现细节
 
@@ -183,46 +240,7 @@ make
   - [x] 批量转换示例
   - [x] 动画处理示例
   - [x] 实例化示例
-- [ ] 添加测试用例
-
-## 示例代码
-
-项目包含以下示例代码，位于 `examples` 目录：
-
-1. **基本转换** (basic_conversion.cpp)
-   - 演示最基本的OSGB到B3DM的转换
-   - 包含错误处理和进度输出
-
-2. **批量转换** (batch_conversion.cpp)
-   - 演示如何批量转换目录中的OSGB文件
-   - 使用多线程并行处理
-   - 包含详细的进度和统计信息
-
-3. **动画处理** (animation_example.cpp)
-   - 演示如何处理带有动画的OSGB模型
-   - 包含动画信息的提取和显示
-   - 展示动画数据的转换过程
-
-4. **实例化处理** (instancing_example.cpp)
-   - 演示如何创建和处理实例化模型
-   - 包含实例化场景的构建
-   - 展示实例化数据的转换过程
-
-### 编译示例
-
-```bash
-# 在项目根目录下
-mkdir build
-cd build
-cmake ..
-make
-
-# 运行示例
-./examples/basic_conversion input.osgb output.b3dm
-./examples/batch_conversion input_directory output_directory
-./examples/animation_example animated.osgb output.b3dm
-./examples/instancing_example base.osgb output.b3dm
-```
+- [x] 添加测试用例
 
 ## 已知问题
 
