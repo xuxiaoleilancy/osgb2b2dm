@@ -2,10 +2,11 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <filesystem>
 #include <thread>
-#include <future>
+#include <mutex>
+#include <filesystem>
 
+using namespace osgb2b3dm;
 namespace fs = std::filesystem;
 
 /**
@@ -13,76 +14,76 @@ namespace fs = std::filesystem;
  * 展示了如何并行处理多个OSGB文件的转换
  */
 
-// 转换单个文件的函数
-bool convertFile(const fs::path& input, const fs::path& output) {
-    try {
-        Osgb2B3dm converter;
-        return converter.convert(input.string(), output.string());
-    } catch (const std::exception& e) {
-        std::cerr << "转换文件 " << input << " 时发生错误: " << e.what() << std::endl;
-        return false;
+// 线程安全的输出
+std::mutex cout_mutex;
+void safe_cout(const std::string& msg) {
+    std::lock_guard<std::mutex> lock(cout_mutex);
+    std::cout << msg << std::endl;
+}
+
+// 转换单个文件
+void convert_file(const fs::path& input, const fs::path& output) {
+    Osgb2B3dm converter;
+    converter.setVerbose(false);
+
+    safe_cout("Converting: " + input.string());
+    
+    if (!converter.convert(input.string(), output.string())) {
+        safe_cout("Error: " + converter.lastErrorMessage());
+    } else {
+        safe_cout("Success: " + input.filename().string());
     }
 }
 
 int main(int argc, char* argv[]) {
     if (argc != 3) {
-        std::cerr << "用法: " << argv[0] << " <input_directory> <output_directory>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <input_dir> <output_dir>" << std::endl;
         return 1;
     }
 
-    fs::path inputDir = argv[1];
-    fs::path outputDir = argv[2];
+    fs::path input_dir(argv[1]);
+    fs::path output_dir(argv[2]);
 
-    // 检查输入目录是否存在
-    if (!fs::exists(inputDir)) {
-        std::cerr << "输入目录不存在: " << inputDir << std::endl;
+    if (!fs::exists(input_dir) || !fs::is_directory(input_dir)) {
+        std::cerr << "Error: Input directory does not exist or is not a directory" << std::endl;
         return 1;
     }
 
-    // 创建输出目录（如果不存在）
-    fs::create_directories(outputDir);
+    if (!fs::exists(output_dir)) {
+        fs::create_directories(output_dir);
+    }
 
-    // 获取可用的CPU核心数
-    unsigned int numThreads = std::thread::hardware_concurrency();
-    std::cout << "使用 " << numThreads << " 个线程进行并行转换" << std::endl;
+    std::vector<std::thread> threads;
+    const size_t max_threads = std::thread::hardware_concurrency();
 
-    // 存储所有转换任务
-    std::vector<std::future<bool>> tasks;
-    int fileCount = 0;
-
-    // 遍历输入目录
-    for (const auto& entry : fs::recursive_directory_iterator(inputDir)) {
+    for (const auto& entry : fs::directory_iterator(input_dir)) {
         if (entry.path().extension() == ".osgb") {
-            // 构建输出文件路径
-            fs::path relativePath = fs::relative(entry.path(), inputDir);
-            fs::path outputPath = outputDir / relativePath;
-            outputPath.replace_extension(".b3dm");
-
-            // 创建必要的子目录
-            fs::create_directories(outputPath.parent_path());
-
-            // 启动异步转换任务
-            tasks.push_back(std::async(std::launch::async, 
-                convertFile, entry.path(), outputPath));
+            fs::path output_path = output_dir / entry.path().filename().replace_extension(".b3dm");
             
-            fileCount++;
-            std::cout << "添加转换任务: " << entry.path() << " -> " << outputPath << std::endl;
+            // 等待线程数量低于最大值
+            while (threads.size() >= max_threads) {
+                for (auto it = threads.begin(); it != threads.end();) {
+                    if (it->joinable()) {
+                        it->join();
+                        it = threads.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+
+            threads.emplace_back(convert_file, entry.path(), output_path);
         }
     }
 
-    // 等待所有任务完成并收集结果
-    int successCount = 0;
-    for (auto& task : tasks) {
-        if (task.get()) {
-            successCount++;
+    // 等待所有线程完成
+    for (auto& thread : threads) {
+        if (thread.joinable()) {
+            thread.join();
         }
     }
 
-    // 输出统计信息
-    std::cout << "\n转换完成!" << std::endl;
-    std::cout << "总文件数: " << fileCount << std::endl;
-    std::cout << "成功转换: " << successCount << std::endl;
-    std::cout << "失败转换: " << (fileCount - successCount) << std::endl;
-
-    return (successCount == fileCount) ? 0 : 1;
+    std::cout << "All conversions completed!" << std::endl;
+    return 0;
 } 

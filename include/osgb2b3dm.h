@@ -1,5 +1,4 @@
-#ifndef OSGB2B3DM_H
-#define OSGB2B3DM_H
+#pragma once
 
 #include <string>
 #include <vector>
@@ -23,6 +22,8 @@
 #include <osgAnimation/Channel>
 #include <osgAnimation/Sampler>
 #include <nlohmann/json.hpp>
+#include <memory>
+#include "osgb2b3dm_error.h"
 
 namespace {
     // 骨骼动画相关类型定义
@@ -32,15 +33,79 @@ namespace {
     typedef osgAnimation::TemplateLinearInterpolator<osg::Vec3d> Vec3Interpolator;
 }
 
+namespace osgb2b3dm {
+
+// 前向声明
+class Osgb2B3dm;
+
+// 动画结构体
+struct Animation {
+    std::string name;
+    double duration = 0.0;
+    std::vector<std::string> channels;
+    std::vector<std::string> samplers;
+};
+
+// 实例化结构体
+struct Instance {
+    std::string name;
+    osg::Matrix transform;
+    int meshIndex = -1;
+    int materialIndex = -1;
+    std::vector<int> children;
+    std::vector<std::string> userData;
+};
+
+struct InstanceGroup {
+    std::string name;
+    std::vector<Instance> instances;
+    osg::Matrix baseTransform;
+    std::vector<std::string> userData;
+};
+
 class Osgb2B3dm {
 public:
     Osgb2B3dm();
     ~Osgb2B3dm();
 
-    // 转换入口函数
+    // 转换函数
     bool convert(const std::string& inputPath, const std::string& outputPath);
 
+    // 获取错误信息
+    std::error_code lastError() const { return lastError_; }
+    std::string lastErrorMessage() const { return lastErrorMessage_; }
+
+    // 设置选项
+    void setVerbose(bool verbose) { verbose_ = verbose; }
+    void setValidateInput(bool validate) { validateInput_ = validate; }
+    void setValidateOutput(bool validate) { validateOutput_ = validate; }
+
+    // 测试用函数
+    bool processScene();
+    bool validateInput();
+    bool validateOutput();
+
+    // 测试用数据设置函数
+    void addAnimation(const Animation& anim) { _animations.push_back(anim); }
+    void addInstanceGroup(const InstanceGroup& group) { _instanceGroups.push_back(group); }
+
+protected:
+    // 内部实现
+    bool loadInputFile(const std::string& path);
+    bool saveOutputFile(const std::string& path);
+
+    // 错误处理
+    void setError(ErrorCode code, const std::string& message = "");
+    void clearError();
+
 private:
+    // 成员变量
+    std::error_code lastError_;
+    std::string lastErrorMessage_;
+    bool verbose_ = false;
+    bool validateInput_ = true;
+    bool validateOutput_ = true;
+
     // 材质结构体
     struct Material {
         // 基础颜色属性
@@ -83,14 +148,6 @@ private:
         
         // 材质名称
         std::string name = "default";
-    };
-
-    // 动画结构体
-    struct Animation {
-        std::string name;
-        double duration = 0.0;
-        std::vector<std::string> channels;
-        std::vector<std::string> samplers;
     };
 
     // 动画通道结构体
@@ -167,23 +224,6 @@ private:
         std::vector<int> joints;
         std::vector<float> weights;
         int maxInfluences = 4;  // 每个顶点最大影响骨骼数
-    };
-
-    // 实例化结构体
-    struct Instance {
-        std::string name;
-        osg::Matrix transform;
-        int meshIndex = -1;
-        int materialIndex = -1;
-        std::vector<int> children;
-        std::vector<std::string> userData;
-    };
-
-    struct InstanceGroup {
-        std::string name;
-        std::vector<Instance> instances;
-        osg::Matrix baseTransform;
-        std::vector<std::string> userData;
     };
 
     // 读取 OSGB 文件
@@ -297,4 +337,4 @@ private:
     std::vector<InstanceGroup> _instanceGroups;  // 存储实例化组
 };
 
-#endif // OSGB2B3DM_H
+} // namespace osgb2b3dm

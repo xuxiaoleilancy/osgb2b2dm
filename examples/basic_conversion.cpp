@@ -2,34 +2,32 @@
 #include <iostream>
 #include <string>
 
+using namespace osgb2b3dm;
+
 /**
  * 基本的OSGB到B3DM转换示例
  * 展示了最基本的转换功能
  */
 int main(int argc, char* argv[]) {
     if (argc != 3) {
-        std::cerr << "用法: " << argv[0] << " <input.osgb> <output.b3dm>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <input.osgb> <output.b3dm>" << std::endl;
         return 1;
     }
-
-    std::string inputPath = argv[1];
-    std::string outputPath = argv[2];
 
     // 创建转换器实例
     Osgb2B3dm converter;
 
+    // 设置选项
+    converter.setVerbose(true);
+    converter.setValidateInput(true);
+    converter.setValidateOutput(true);
+
     // 执行转换
-    std::cout << "开始转换..." << std::endl;
-    std::cout << "输入文件: " << inputPath << std::endl;
-    std::cout << "输出文件: " << outputPath << std::endl;
-
-    bool success = converter.convert(inputPath, outputPath);
-
-    if (success) {
-        std::cout << "转换成功!" << std::endl;
-        return 0;
-    } else {
-        std::cerr << "转换失败!" << std::endl;
+    if (!converter.convert(argv[1], argv[2])) {
+        std::cerr << "Error: " << converter.lastErrorMessage() << std::endl;
         return 1;
     }
+
+    std::cout << "Conversion successful!" << std::endl;
+    return 0;
 } 
