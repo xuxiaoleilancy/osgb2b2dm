@@ -1,38 +1,59 @@
 # OSGB 转 B3DM 转换器
 
-一个用于将 OSGB 格式的 3D 模型转换为 B3DM 格式的工具。B3DM 是 3D Tiles 规范中的一种瓦片格式，适用于大规模 3D 场景的流式加载。
+一个用于将 OSGB (OpenSceneGraph Binary) 格式转换为 B3DM (Batched 3D Model) 格式的工具。B3DM 是 Cesium 3D Tiles 规范中的一种瓦片格式，用于高效地传输和渲染大规模 3D 模型。
 
 ## 功能特点
 
-- 支持 OSGB 到 B3DM 的转换
-- 保留模型的几何数据（顶点、法线、纹理坐标）
-- 支持材质和纹理信息
-- 正确处理变换矩阵
-- 生成符合 glTF 2.0 规范的 JSON
-- 优化二进制数据打包
+- 支持 OSGB 到 B3DM 的完整转换
+- 保留模型的几何结构、材质和纹理
+- 支持 PBR (Physically Based Rendering) 材质
+- 支持多种纹理类型：
+  - 基础颜色纹理
+  - 法线贴图
+  - 金属度/粗糙度纹理
+  - 环境光遮蔽纹理
+  - 自发光纹理
+- 支持材质属性：
+  - 环境光、漫反射、镜面反射、自发光颜色
+  - 金属度/粗糙度
+  - 透明度控制
+  - 双面渲染
+- 支持纹理变换：
+  - 缩放
+  - 偏移
+  - 旋转
+- 支持节点层次结构和变换矩阵
+- 支持动画功能：
+  - 变形目标动画
+  - 动画事件系统
+  - 自定义用户数据
+  - 动画关键帧插值
 
 ## 依赖项
 
-- OpenSceneGraph (OSG)
-- nlohmann/json
-- zlib
+- OpenSceneGraph (OSG) - 用于读取和处理 OSGB 文件
+  - 需要启用动画支持
+  - 需要支持 osgAnimation
+- nlohmann/json - 用于生成 glTF JSON
+- zlib - 用于数据压缩
 
-## 编译和安装
+## 安装
 
-1. 确保已安装所有依赖项：
+### 依赖安装
+
 ```bash
-# macOS (使用 Homebrew)
-brew install open-scene-graph nlohmann-json
+# macOS
+brew install openscenegraph nlohmann-json zlib
 
 # Ubuntu/Debian
 sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev
 ```
 
-2. 克隆仓库并编译：
+### 编译
+
 ```bash
-git clone https://github.com/xuxiaoleilancy/osgb2b2dm.git
-cd osgb2b3dm
-mkdir build && cd build
+mkdir build
+cd build
 cmake ..
 make
 ```
@@ -43,42 +64,107 @@ make
 ./osgb2b3dm input.osgb output.b3dm
 ```
 
-## 实现的功能
+### 参数说明
 
-- [x] 基本几何数据提取
-- [x] 材质和纹理处理
-- [x] 变换矩阵应用
-- [x] glTF JSON 生成
-- [x] 二进制数据打包
-- [x] B3DM 文件写入
+- `input.osgb` - 输入的 OSGB 文件路径
+- `output.b3dm` - 输出的 B3DM 文件路径
 
-## TODO 列表
+## 实现细节
+
+### 材质处理
+
+- 从 OSG 的 `StateSet` 中提取材质属性
+- 支持 PBR 材质工作流
+- 自动计算金属度和粗糙度
+- 支持透明度和混合模式
+
+### 纹理处理
+
+- 支持多种纹理类型
+- 保留纹理变换信息
+- 自动处理纹理坐标
+
+### 几何处理
+
+- 保留顶点、法线和纹理坐标
+- 支持三角形索引
+- 应用节点变换矩阵
+- 计算正确的边界框
+
+### 动画处理
+
+- 支持变形目标动画
+  - 提取变形目标几何体
+  - 保留权重信息
+  - 支持多目标混合
+- 动画事件系统
+  - 支持自定义事件数据
+  - 事件时间轴集成
+  - 与glTF动画系统兼容
+- 支持的glTF扩展
+  - KHR_materials_pbrSpecularGlossiness
+  - KHR_texture_transform
+  - KHR_animation_events
+
+## TODO
 
 ### 功能改进
-- [ ] 实现完整的材质属性支持
-- [ ] 添加纹理压缩和优化
-- [ ] 支持动画数据
-- [ ] 添加批处理功能
-- [ ] 实现命令行参数解析
+- [x] 实现完整的材质属性支持
+  - [x] 环境光/漫反射/镜面反射/自发光颜色
+  - [x] 金属度/粗糙度
+  - [x] 透明度控制
+  - [x] 双面渲染
+- [x] 实现纹理支持
+  - [x] 基础颜色纹理
+  - [x] 法线贴图
+  - [x] 金属度/粗糙度纹理
+  - [x] 环境光遮蔽纹理
+  - [x] 自发光纹理
+- [x] 实现纹理变换
+  - [x] 缩放
+  - [x] 偏移
+  - [x] 旋转
+- [x] 实现动画支持
+  - [ ] 骨骼动画
+  - [x] 变形动画
+  - [ ] 动画混合
+  - [x] 动画事件
+- [ ] 实现实例化支持
+  - [ ] 实例化几何体
+  - [ ] 实例化材质
+  - [ ] 实例化变换
 
 ### 代码优化
-- [ ] 添加并行处理支持
 - [ ] 优化内存使用
-- [ ] 改进错误处理机制
-- [ ] 添加单元测试
-- [ ] 实现日志系统
+  - [ ] 使用内存池
+  - [ ] 优化数据结构
+  - [ ] 减少临时对象
+- [ ] 优化性能
+  - [ ] 多线程处理
+  - [ ] SIMD 优化
+  - [ ] 缓存优化
+- [ ] 优化错误处理
+  - [ ] 详细的错误信息
+  - [ ] 错误恢复机制
+  - [ ] 日志系统
 
 ### 文档完善
-- [ ] 添加详细的 API 文档
-- [ ] 编写使用示例
-- [ ] 添加性能测试报告
-- [ ] 完善错误代码说明
-- [ ] 添加贡献指南
+- [x] 添加详细的使用文档
+- [ ] 添加 API 文档
+- [ ] 添加示例代码
+- [ ] 添加测试用例
 
-## 贡献
+## 已知问题
 
-欢迎提交 Issue 和 Pull Request 来帮助改进这个项目。
+- 大文件转换可能需要较大内存
+- 某些复杂的动画可能不完全支持
+- 需要正确配置纹理路径
+- 动画事件数据需要符合JSON格式
 
 ## 许可证
 
 MIT License
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request 来改进这个项目。如果您发现任何问题或有改进建议，请随时提出。

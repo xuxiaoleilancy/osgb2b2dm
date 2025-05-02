@@ -5,7 +5,11 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # 查找依赖
-find_package(OpenSceneGraph REQUIRED)
+find_package(OpenSceneGraph REQUIRED COMPONENTS
+    osg
+    osgDB
+    osgAnimation
+)
 find_package(nlohmann_json REQUIRED)
 
 # 添加可执行文件
@@ -22,9 +26,7 @@ target_include_directories(osgb2b3dm PRIVATE
 
 # 链接库
 target_link_libraries(osgb2b3dm PRIVATE
-    /opt/homebrew/Cellar/open-scene-graph/3.6.5_2/lib/libosgDB.dylib
-    /opt/homebrew/Cellar/open-scene-graph/3.6.5_2/lib/libosg.dylib
-    /opt/homebrew/Cellar/open-scene-graph/3.6.5_2/lib/libOpenThreads.dylib
+    ${OPENSCENEGRAPH_LIBRARIES}
     nlohmann_json::nlohmann_json
     z
 )
