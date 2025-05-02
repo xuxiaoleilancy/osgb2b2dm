@@ -67,6 +67,9 @@ bool Osgb2B3dm::convert(const std::string& inputPath, const std::string& outputP
     // 处理动画混合器
     processAnimationMixer(node.get());
 
+    // 提取实例
+    extractInstances(node.get());
+
     // 生成 glTF JSON
     nlohmann::json gltfJson = generateGltfJson(positions, normals, texcoords, indices, bbox, texturePaths);
 
@@ -85,6 +88,9 @@ bool Osgb2B3dm::convert(const std::string& inputPath, const std::string& outputP
     for (size_t i = 0; i < _skinData.size(); ++i) {
         addSkinningDataToGltf(gltfJson, _skinData[i], "mesh_" + std::to_string(i));
     }
+
+    // 添加实例
+    addInstancesToGltf(gltfJson);
 
     // 打包二进制数据
     std::vector<unsigned char> binaryData = packBinaryData(positions, normals, texcoords, indices);
@@ -995,6 +1001,9 @@ nlohmann::json Osgb2B3dm::generateGltfJson(const std::vector<float>& positions,
         addSkinningDataToGltf(gltf, _skinData[i], "mesh_" + std::to_string(i));
     }
 
+    // 添加实例
+    addInstancesToGltf(gltf);
+
     return gltf;
 }
 
@@ -1338,5 +1347,227 @@ void Osgb2B3dm::addAnimationEventsToGltf(nlohmann::json& gltf,
                   gltf["extensionsUsed"].end(),
                   "KHR_animation_events") == gltf["extensionsUsed"].end()) {
         gltf["extensionsUsed"].push_back("KHR_animation_events");
+    }
+}
+
+void Osgb2B3dm::extractInstances(osg::Node* node) {
+    if (!node) return;
+
+    // 检查是否是实例化组
+    if (osg::Group* group = node->asGroup()) {
+        processInstanceGroup(group, node->getName());
+    }
+
+    // 递归处理子节点
+    osg::Group* group = node->asGroup();
+    if (group) {
+        for (unsigned int i = 0; i < group->getNumChildren(); ++i) {
+            extractInstances(group->getChild(i));
+        }
+    }
+}
+
+void Osgb2B3dm::processInstanceGroup(osg::Group* group, const std::string& name) {
+    if (!group) return;
+
+    // 检查是否是实例化组
+    bool isInstanceGroup = false;
+    osg::UserDataContainer* userData = group->getUserDataContainer();
+    if (userData) {
+        for (unsigned int i = 0; i < userData->getNumUserObjects(); ++i) {
+            const osg::Object* obj = userData->getUserObject(i);
+            if (obj && obj->getName() == "InstanceGroup") {
+                isInstanceGroup = true;
+                break;
+            }
+        }
+    }
+
+    if (!isInstanceGroup) return;
+
+    // 创建实例化组
+    InstanceGroup instanceGroup;
+    instanceGroup.name = name;
+
+    // 获取实例组的变换矩阵
+    osg::MatrixList matrices = group->getWorldMatrices();
+    if (!matrices.empty()) {
+        instanceGroup.baseTransform = matrices[0];
+    }
+
+    // 遍历子节点
+    for (unsigned int i = 0; i < group->getNumChildren(); ++i) {
+        osg::Node* child = group->getChild(i);
+        Instance instance;
+        
+        // 获取实例的变换矩阵
+        osg::MatrixList childMatrices = child->getWorldMatrices();
+        if (!childMatrices.empty()) {
+            instance.transform = childMatrices[0];
+        }
+
+        // 检查是否是几何体节点
+        if (osg::Geode* geode = child->asGeode()) {
+            for (unsigned int j = 0; j < geode->getNumDrawables(); ++j) {
+                osg::Geometry* geom = geode->getDrawable(j)->asGeometry();
+                if (geom) {
+                    // 提取几何体数据
+                    std::vector<float> positions;
+                    std::vector<float> normals;
+                    std::vector<float> texcoords;
+                    std::vector<unsigned short> indices;
+                    osg::BoundingBox bbox;
+                    extractGeometry(geom, positions, normals, texcoords, indices, bbox, instance.transform);
+
+                    // 创建网格
+                    nlohmann::json gltf = generateGltfJson(positions, normals, texcoords, indices, bbox, {});
+                    instance.meshIndex = gltf["meshes"].size() - 1;
+
+                    // 提取材质
+                    if (geom->getStateSet()) {
+                        Material material;
+                        extractMaterialProperties(geom->getStateSet(), material);
+                        _materials.push_back(material);
+                        instance.materialIndex = _materials.size() - 1;
+                    }
+                }
+            }
+        }
+
+        instanceGroup.instances.push_back(instance);
+    }
+
+    _instanceGroups.push_back(instanceGroup);
+}
+
+void Osgb2B3dm::addInstancesToGltf(nlohmann::json& gltf) {
+    if (_instanceGroups.empty()) return;
+
+    // 添加实例化扩展
+    if (gltf.find("extensions") == gltf.end()) {
+        gltf["extensions"] = nlohmann::json::object();
+    }
+
+    gltf["extensions"]["EXT_mesh_gpu_instancing"] = nlohmann::json::object();
+
+    // 添加实例化组
+    for (const auto& group : _instanceGroups) {
+        addInstanceNodesToGltf(gltf, group);
+        addInstanceMeshesToGltf(gltf, group);
+    }
+
+    // 添加扩展到扩展列表
+    if (gltf.find("extensionsUsed") == gltf.end()) {
+        gltf["extensionsUsed"] = nlohmann::json::array();
+    }
+    if (std::find(gltf["extensionsUsed"].begin(),
+                  gltf["extensionsUsed"].end(),
+                  "EXT_mesh_gpu_instancing") == gltf["extensionsUsed"].end()) {
+        gltf["extensionsUsed"].push_back("EXT_mesh_gpu_instancing");
+    }
+}
+
+void Osgb2B3dm::addInstanceNodesToGltf(nlohmann::json& gltf, const InstanceGroup& group) {
+    if (group.instances.empty()) return;
+
+    // 确保存在节点数组
+    if (gltf.find("nodes") == gltf.end()) {
+        gltf["nodes"] = nlohmann::json::array();
+    }
+
+    // 创建实例化组节点
+    nlohmann::json groupNode = {
+        {"name", group.name},
+        {"matrix", nlohmann::json::array()}
+    };
+
+    // 添加基础变换矩阵
+    const osg::Matrix& mat = group.baseTransform;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            groupNode["matrix"].push_back(mat(i,j));
+        }
+    }
+
+    // 添加实例节点
+    groupNode["children"] = nlohmann::json::array();
+    for (const auto& instance : group.instances) {
+        nlohmann::json instanceNode = {
+            {"name", instance.name},
+            {"mesh", instance.meshIndex},
+            {"matrix", nlohmann::json::array()}
+        };
+
+        // 添加变换矩阵
+        const osg::Matrix& mat = instance.transform;
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                instanceNode["matrix"].push_back(mat(i,j));
+            }
+        }
+
+        // 添加材质
+        if (instance.materialIndex >= 0) {
+            instanceNode["material"] = instance.materialIndex;
+        }
+
+        // 添加子节点
+        if (!instance.children.empty()) {
+            instanceNode["children"] = instance.children;
+        }
+
+        groupNode["children"].push_back(gltf["nodes"].size());
+        gltf["nodes"].push_back(instanceNode);
+    }
+
+    gltf["nodes"].push_back(groupNode);
+}
+
+void Osgb2B3dm::addInstanceMeshesToGltf(nlohmann::json& gltf, const InstanceGroup& group) {
+    if (group.instances.empty()) return;
+
+    // 确保存在网格数组
+    if (gltf.find("meshes") == gltf.end()) {
+        gltf["meshes"] = nlohmann::json::array();
+    }
+
+    // 为每个实例创建网格
+    for (const auto& instance : group.instances) {
+        if (instance.meshIndex < 0) continue;
+
+        nlohmann::json mesh = {
+            {"name", instance.name + "_instance"},
+            {"primitives", nlohmann::json::array()}
+        };
+
+        // 添加图元
+        nlohmann::json primitive = {
+            {"attributes", {
+                {"POSITION", 0},
+                {"NORMAL", 1},
+                {"TEXCOORD_0", 2}
+            }},
+            {"indices", 3},
+            {"mode", 4}  // TRIANGLES
+        };
+
+        // 添加材质
+        if (instance.materialIndex >= 0) {
+            primitive["material"] = instance.materialIndex;
+        }
+
+        // 添加实例化属性
+        primitive["extensions"] = {
+            {"EXT_mesh_gpu_instancing", {
+                {"attributes", {
+                    {"TRANSLATION", 4},
+                    {"ROTATION", 5},
+                    {"SCALE", 6}
+                }}
+            }}
+        };
+
+        mesh["primitives"].push_back(primitive);
+        gltf["meshes"].push_back(mesh);
     }
 }

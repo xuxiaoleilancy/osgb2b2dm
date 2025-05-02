@@ -169,6 +169,23 @@ private:
         int maxInfluences = 4;  // 每个顶点最大影响骨骼数
     };
 
+    // 实例化结构体
+    struct Instance {
+        std::string name;
+        osg::Matrix transform;
+        int meshIndex = -1;
+        int materialIndex = -1;
+        std::vector<int> children;
+        std::vector<std::string> userData;
+    };
+
+    struct InstanceGroup {
+        std::string name;
+        std::vector<Instance> instances;
+        osg::Matrix baseTransform;
+        std::vector<std::string> userData;
+    };
+
     // 读取 OSGB 文件
     osg::ref_ptr<osg::Node> readOsgb(const std::string& path);
 
@@ -260,6 +277,13 @@ private:
     osg::Vec3 matrixToTranslation(const osg::Matrix& matrix);
     void normalizeWeights(std::vector<float>& weights);
 
+    // 实例化相关函数
+    void extractInstances(osg::Node* node);
+    void processInstanceGroup(osg::Group* group, const std::string& name);
+    void addInstancesToGltf(nlohmann::json& gltf);
+    void addInstanceNodesToGltf(nlohmann::json& gltf, const InstanceGroup& group);
+    void addInstanceMeshesToGltf(nlohmann::json& gltf, const InstanceGroup& group);
+
     std::vector<Material> _materials;  // 存储提取的材质
     std::vector<Animation> _animations; // 存储提取的动画
     std::vector<AnimationChannel> _animationChannels; // 存储动画通道
@@ -270,6 +294,7 @@ private:
     std::vector<SkeletonAnimationChannel> _skeletonChannels;
     std::vector<AnimationMixer> _animationMixers;
     std::vector<SkinData> _skinData;
+    std::vector<InstanceGroup> _instanceGroups;  // 存储实例化组
 };
 
 #endif // OSGB2B3DM_H
