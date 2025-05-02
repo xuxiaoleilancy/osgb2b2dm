@@ -392,10 +392,37 @@ ctest
 - 实例化场景过大可能导致性能问题
 - 某些特殊材质效果可能不完全支持
 
+编译脚本使用说明
+
+'''
+# Show help
+./build.sh --help
+
+# Clean build
+./build.sh --clean
+
+# Rebuild everything
+./build.sh --rebuild
+
+# Run tests
+./build.sh --test
+
+# Generate test report
+./build.sh --report
+
+# Build in debug mode
+./build.sh --debug
+
+# Build with verbose output
+./build.sh --verbose
+
+# Build with specific number of jobs
+./build.sh --jobs 4
+
+# Combine options
+./build.sh --rebuild --test --report --verbose
+'''
+
+
 ## 许可证
-
 MIT License
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request 来改进这个项目。如果您发现任何问题或有改进建议，请随时提出。
