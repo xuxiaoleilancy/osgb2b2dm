@@ -30,7 +30,7 @@ sudo apt-get install libopenscenegraph-dev nlohmann-json3-dev zlib1g-dev
 
 2. 克隆仓库并编译：
 ```bash
-git clone https://github.com/yourusername/osgb2b3dm.git
+git clone https://github.com/xuxiaoleilancy/osgb2b2dm.git
 cd osgb2b3dm
 mkdir build && cd build
 cmake ..
@@ -81,4 +81,4 @@ make
 
 ## 许可证
 
-MIT License 
+MIT License
