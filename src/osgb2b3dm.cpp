@@ -58,20 +58,33 @@ bool Osgb2B3dm::convert(const std::string& inputPath, const std::string& outputP
     // 提取变形动画数据
     extractMorphData(node.get());
 
+    // 提取骨骼数据
+    extractSkeletonData(node.get());
+
     // 提取动画事件
     extractAnimationEvents(node.get());
+
+    // 处理动画混合器
+    processAnimationMixer(node.get());
 
     // 生成 glTF JSON
     nlohmann::json gltfJson = generateGltfJson(positions, normals, texcoords, indices, bbox, texturePaths);
 
-    // 添加变形目标
-    addMorphTargetsToGltf(gltfJson, _morphTargets);
+    // 添加骨骼
+    for (const auto& skeleton : _skeletons) {
+        addSkeletonToGltf(gltfJson, skeleton);
+    }
 
-    // 添加变形动画
-    addMorphAnimationsToGltf(gltfJson, _animations);
+    // 添加骨骼动画
+    addSkeletonAnimationToGltf(gltfJson, _skeletonChannels);
 
-    // 添加动画事件
-    addAnimationEventsToGltf(gltfJson, _animationEvents);
+    // 添加动画混合器
+    addAnimationMixerToGltf(gltfJson, _animationMixers);
+
+    // 添加蒙皮数据
+    for (size_t i = 0; i < _skinData.size(); ++i) {
+        addSkinningDataToGltf(gltfJson, _skinData[i], "mesh_" + std::to_string(i));
+    }
 
     // 打包二进制数据
     std::vector<unsigned char> binaryData = packBinaryData(positions, normals, texcoords, indices);
@@ -305,87 +318,443 @@ void Osgb2B3dm::processAnimationCallback(osg::Node* node, const std::string& nod
     }
 }
 
-void Osgb2B3dm::addMorphTargetsToGltf(nlohmann::json& gltf, 
-                                     const std::vector<MorphTarget>& morphTargets) {
-    if (morphTargets.empty()) return;
+void Osgb2B3dm::extractSkeletonData(osg::Node* node) {
+    if (!node) return;
 
-    // 添加变形目标
-    gltf["meshes"][0]["primitives"][0]["targets"] = nlohmann::json::array();
-    for (const auto& target : morphTargets) {
-        nlohmann::json morphTarget = {
-            {"POSITION", target.positions},
-            {"NORMAL", target.normals}
-        };
-        gltf["meshes"][0]["primitives"][0]["targets"].push_back(morphTarget);
+    // 检查是否是骨骼节点
+    osgAnimation::Skeleton* osgSkeleton = dynamic_cast<osgAnimation::Skeleton*>(node);
+    if (osgSkeleton) {
+        Skeleton skeleton;
+        skeleton.name = node->getName();
+        skeleton.osgSkeleton = osgSkeleton;
+        
+        // 提取骨骼层级
+        extractJointHierarchy(osgSkeleton, skeleton);
+        
+        // 处理骨骼动画
+        for (size_t i = 0; i < skeleton.joints.size(); ++i) {
+            if (skeleton.joints[i].bone) {
+                processBoneAnimation(skeleton.joints[i].bone, skeleton.name);
+            }
+        }
+        
+        _skeletons.push_back(skeleton);
     }
 
-    // 添加初始权重
-    gltf["meshes"][0]["weights"] = nlohmann::json::array();
-    for (const auto& target : morphTargets) {
-        if (!target.weights.empty()) {
-            gltf["meshes"][0]["weights"].push_back(target.weights[0]);
-        } else {
-            gltf["meshes"][0]["weights"].push_back(0.0f);
+    // 检查蒙皮几何体
+    osg::Geode* geode = node->asGeode();
+    if (geode) {
+        for (unsigned int i = 0; i < geode->getNumDrawables(); ++i) {
+            osgAnimation::RigGeometry* rigGeometry = 
+                dynamic_cast<osgAnimation::RigGeometry*>(geode->getDrawable(i));
+            if (rigGeometry) {
+                SkinData skinData;
+                extractSkinningData(rigGeometry, skinData);
+                _skinData.push_back(skinData);
+            }
+        }
+    }
+
+    // 递归处理子节点
+    osg::Group* group = node->asGroup();
+    if (group) {
+        for (unsigned int i = 0; i < group->getNumChildren(); ++i) {
+            extractSkeletonData(group->getChild(i));
         }
     }
 }
 
-void Osgb2B3dm::addMorphAnimationsToGltf(nlohmann::json& gltf,
-                                        const std::vector<Animation>& animations) {
-    if (animations.empty()) return;
+void Osgb2B3dm::extractJointHierarchy(osgAnimation::Skeleton* skeleton, Skeleton& outSkeleton) {
+    if (!skeleton) return;
 
-    // 添加动画
-    gltf["animations"] = nlohmann::json::array();
+    std::map<osgAnimation::Bone*, int> boneIndices;
     
-    for (size_t i = 0; i < animations.size(); ++i) {
-        const Animation& anim = animations[i];
-        nlohmann::json animation = {
-            {"name", anim.name},
-            {"channels", nlohmann::json::array()},
-            {"samplers", nlohmann::json::array()}
+    // 第一遍：创建所有关节
+    for (unsigned int i = 0; i < skeleton->getNumChildren(); ++i) {
+        osgAnimation::Bone* bone = dynamic_cast<osgAnimation::Bone*>(skeleton->getChild(i));
+        if (bone) {
+            Joint joint;
+            joint.name = bone->getName();
+            joint.bone = bone;
+            joint.localMatrix = bone->getMatrix();
+            joint.inverseBindMatrix = bone->getInverseMatrix();
+            
+            int jointIndex = outSkeleton.joints.size();
+            boneIndices[bone] = jointIndex;
+            outSkeleton.joints.push_back(joint);
+        }
+    }
+    
+    // 第二遍：建立父子关系
+    for (size_t i = 0; i < outSkeleton.joints.size(); ++i) {
+        Joint& joint = outSkeleton.joints[i];
+        osgAnimation::Bone* bone = joint.bone;
+        
+        if (bone->getNumParents() > 0) {
+            osgAnimation::Bone* parentBone = dynamic_cast<osgAnimation::Bone*>(bone->getParent(0));
+            if (parentBone && boneIndices.find(parentBone) != boneIndices.end()) {
+                joint.parentIndex = boneIndices[parentBone];
+                outSkeleton.joints[joint.parentIndex].children.push_back(i);
+            }
+        } else {
+            outSkeleton.rootJoint = i;
+        }
+    }
+}
+
+void Osgb2B3dm::processBoneAnimation(osgAnimation::Bone* bone, const std::string& skeletonName) {
+    if (!bone) return;
+
+    // 获取骨骼的动画回调
+    osgAnimation::BasicAnimationManager* animManager = 
+        dynamic_cast<osgAnimation::BasicAnimationManager*>(bone->getUpdateCallback());
+    if (!animManager) return;
+
+    // 创建动画通道
+    SkeletonAnimationChannel channel;
+    channel.jointName = bone->getName();
+    
+    // 获取所有动画
+    const osgAnimation::AnimationList& animations = animManager->getAnimationList();
+    for (const auto& anim : animations) {
+        // 处理每个通道
+        const osgAnimation::ChannelList& channels = anim->getChannels();
+        for (const auto& animChannel : channels) {
+            const std::string& targetName = animChannel->getName();
+            const auto& sampler = animChannel->getSampler();
+            
+            if (targetName.find("translation") != std::string::npos) {
+                // 处理位移动画
+                channel.path = "translation";
+                if (auto* keyframes = dynamic_cast<Vec3KeyframeContainer*>(sampler->getKeyframeContainer())) {
+                    for (size_t i = 0; i < keyframes->size(); ++i) {
+                        channel.times.push_back((*keyframes)[i].getTime());
+                        const osg::Vec3d& pos = (*keyframes)[i].getValue();
+                        channel.values.push_back(static_cast<float>(pos.x()));
+                        channel.values.push_back(static_cast<float>(pos.y()));
+                        channel.values.push_back(static_cast<float>(pos.z()));
+                    }
+                }
+            }
+            else if (targetName.find("rotation") != std::string::npos) {
+                // 处理旋转动画
+                channel.path = "rotation";
+                if (auto* keyframes = dynamic_cast<QuatKeyframeContainer*>(sampler->getKeyframeContainer())) {
+                    for (size_t i = 0; i < keyframes->size(); ++i) {
+                        channel.times.push_back((*keyframes)[i].getTime());
+                        const osg::Quat& rot = (*keyframes)[i].getValue();
+                        channel.values.push_back(static_cast<float>(rot.x()));
+                        channel.values.push_back(static_cast<float>(rot.y()));
+                        channel.values.push_back(static_cast<float>(rot.z()));
+                        channel.values.push_back(static_cast<float>(rot.w()));
+                    }
+                }
+            }
+            else if (targetName.find("scale") != std::string::npos) {
+                // 处理缩放动画
+                channel.path = "scale";
+                if (auto* keyframes = dynamic_cast<Vec3KeyframeContainer*>(sampler->getKeyframeContainer())) {
+                    for (size_t i = 0; i < keyframes->size(); ++i) {
+                        channel.times.push_back((*keyframes)[i].getTime());
+                        const osg::Vec3d& scl = (*keyframes)[i].getValue();
+                        channel.values.push_back(static_cast<float>(scl.x()));
+                        channel.values.push_back(static_cast<float>(scl.y()));
+                        channel.values.push_back(static_cast<float>(scl.z()));
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!channel.times.empty()) {
+        _skeletonChannels.push_back(channel);
+    }
+}
+
+void Osgb2B3dm::extractSkinningData(osgAnimation::RigGeometry* rigGeometry, SkinData& outSkinData) {
+    if (!rigGeometry) return;
+
+    // 获取顶点权重数组
+    osg::Vec4Array* weights = dynamic_cast<osg::Vec4Array*>(
+        rigGeometry->getVertexAttribArray(1));  // 权重通常存储在属性1中
+    osg::Vec4Array* joints = dynamic_cast<osg::Vec4Array*>(
+        rigGeometry->getVertexAttribArray(2));  // 关节索引通常存储在属性2中
+
+    if (!weights || !joints) return;
+
+    // 提取权重和关节索引
+    for (size_t i = 0; i < weights->size(); ++i) {
+        const osg::Vec4& w = (*weights)[i];
+        const osg::Vec4& j = (*joints)[i];
+
+        // 添加关节索引
+        outSkinData.joints.push_back(static_cast<int>(j.x()));
+        outSkinData.joints.push_back(static_cast<int>(j.y()));
+        outSkinData.joints.push_back(static_cast<int>(j.z()));
+        outSkinData.joints.push_back(static_cast<int>(j.w()));
+
+        // 添加权重
+        outSkinData.weights.push_back(w.x());
+        outSkinData.weights.push_back(w.y());
+        outSkinData.weights.push_back(w.z());
+        outSkinData.weights.push_back(w.w());
+    }
+}
+
+void Osgb2B3dm::processAnimationMixer(osg::Node* node) {
+    if (!node) return;
+
+    // 检查节点是否有动画混合器数据
+    osg::UserDataContainer* userDataContainer = node->getUserDataContainer();
+    if (userDataContainer) {
+        for (unsigned int i = 0; i < userDataContainer->getNumUserObjects(); ++i) {
+            const osg::Object* obj = userDataContainer->getUserObject(i);
+            if (const osgAnimation::BasicAnimationManager* animManager = 
+                dynamic_cast<const osgAnimation::BasicAnimationManager*>(obj)) {
+                
+                // 创建动画混合器
+                AnimationMixer mixer;
+                mixer.name = node->getName() + "_mixer";
+                
+                // 获取所有动画
+                const osgAnimation::AnimationList& animations = animManager->getAnimationList();
+                for (const auto& anim : animations) {
+                    mixer.animations.push_back(anim->getName());
+                    mixer.duration = std::max(mixer.duration, 
+                        static_cast<float>(anim->getDuration()));
+                }
+                
+                // 初始化权重
+                mixer.weights.resize(mixer.animations.size(), 0.0f);
+                if (!mixer.weights.empty()) {
+                    mixer.weights[0] = 1.0f;  // 默认第一个动画权重为1
+                }
+                
+                _animationMixers.push_back(mixer);
+            }
+        }
+    }
+}
+
+void Osgb2B3dm::addSkeletonToGltf(nlohmann::json& gltf, const Skeleton& skeleton) {
+    if (skeleton.joints.empty()) return;
+
+    // 添加骨骼节点
+    if (gltf.find("nodes") == gltf.end()) {
+        gltf["nodes"] = nlohmann::json::array();
+    }
+
+    // 记录骨骼节点的起始索引
+    int baseNodeIndex = gltf["nodes"].size();
+
+    // 添加所有关节节点
+    for (const auto& joint : skeleton.joints) {
+        nlohmann::json node = {
+            {"name", joint.name}
         };
 
-        // 添加采样器
-        for (size_t j = 0; j < anim.samplers.size(); ++j) {
-            const AnimationSampler& sampler = _animationSamplers[j];
-            animation["samplers"].push_back({
-                {"input", sampler.input},
-                {"output", sampler.output},
-                {"interpolation", sampler.interpolation}
-            });
+        // 添加局部变换
+        osg::Vec3 translation = matrixToTranslation(joint.localMatrix);
+        osg::Quat rotation = matrixToQuaternion(joint.localMatrix);
+        osg::Vec3 scale = matrixToScale(joint.localMatrix);
+
+        node["translation"] = {translation.x(), translation.y(), translation.z()};
+        node["rotation"] = {rotation.x(), rotation.y(), rotation.z(), rotation.w()};
+        node["scale"] = {scale.x(), scale.y(), scale.z()};
+
+        if (!joint.children.empty()) {
+            node["children"] = nlohmann::json::array();
+            for (int childIndex : joint.children) {
+                node["children"].push_back(baseNodeIndex + childIndex);
+            }
         }
+
+        gltf["nodes"].push_back(node);
+    }
+
+    // 添加皮肤
+    if (gltf.find("skins") == gltf.end()) {
+        gltf["skins"] = nlohmann::json::array();
+    }
+
+    nlohmann::json skin = {
+        {"name", skeleton.name},
+        {"joints", nlohmann::json::array()}
+    };
+
+    // 添加关节索引
+    for (size_t i = 0; i < skeleton.joints.size(); ++i) {
+        skin["joints"].push_back(baseNodeIndex + i);
+    }
+
+    // 添加逆绑定矩阵
+    std::vector<float> ibmData;
+    for (const auto& joint : skeleton.joints) {
+        const osg::Matrix& ibm = joint.inverseBindMatrix;
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                ibmData.push_back(static_cast<float>(ibm(i,j)));
+            }
+        }
+    }
+
+    // 创建 IBM 缓冲视图和访问器
+    if (gltf.find("bufferViews") == gltf.end()) {
+        gltf["bufferViews"] = nlohmann::json::array();
+    }
+    if (gltf.find("accessors") == gltf.end()) {
+        gltf["accessors"] = nlohmann::json::array();
+    }
+
+    int bufferViewIndex = gltf["bufferViews"].size();
+    int accessorIndex = gltf["accessors"].size();
+
+    gltf["bufferViews"].push_back({
+        {"buffer", 0},
+        {"byteOffset", 0},  // 需要在打包二进制数据时更新
+        {"byteLength", ibmData.size() * sizeof(float)}
+    });
+
+    gltf["accessors"].push_back({
+        {"bufferView", bufferViewIndex},
+        {"componentType", 5126},  // FLOAT
+        {"count", skeleton.joints.size()},
+        {"type", "MAT4"}
+    });
+
+    skin["inverseBindMatrices"] = accessorIndex;
+    gltf["skins"].push_back(skin);
+}
+
+void Osgb2B3dm::addSkeletonAnimationToGltf(nlohmann::json& gltf,
+                                          const std::vector<SkeletonAnimationChannel>& channels) {
+    if (channels.empty()) return;
+
+    if (gltf.find("animations") == gltf.end()) {
+        gltf["animations"] = nlohmann::json::array();
+    }
+
+    nlohmann::json animation = {
+        {"name", "skeletonAnimation"},
+        {"channels", nlohmann::json::array()},
+        {"samplers", nlohmann::json::array()}
+    };
+
+    int samplerIndex = 0;
+    for (const auto& channel : channels) {
+        // 添加采样器
+        animation["samplers"].push_back({
+            {"input", createAccessor(gltf, channel.times, "SCALAR")},
+            {"output", createAccessor(gltf, channel.values, 
+                channel.path == "rotation" ? "VEC4" : "VEC3")},
+            {"interpolation", channel.interpolation}
+        });
 
         // 添加通道
-        for (size_t j = 0; j < anim.channels.size(); ++j) {
-            const AnimationChannel& channel = _animationChannels[j];
-            animation["channels"].push_back({
-                {"sampler", static_cast<int>(j)},
-                {"target", {
-                    {"node", 0},
-                    {"path", channel.path}
-                }}
-            });
-        }
+        animation["channels"].push_back({
+            {"sampler", samplerIndex},
+            {"target", {
+                {"node", findNodeIndex(gltf, channel.jointName)},
+                {"path", channel.path}
+            }}
+        });
 
-        gltf["animations"].push_back(animation);
+        samplerIndex++;
+    }
+
+    gltf["animations"].push_back(animation);
+}
+
+void Osgb2B3dm::addAnimationMixerToGltf(nlohmann::json& gltf,
+                                       const std::vector<AnimationMixer>& mixers) {
+    if (mixers.empty()) return;
+
+    // 添加动画混合器扩展
+    if (gltf.find("extensions") == gltf.end()) {
+        gltf["extensions"] = nlohmann::json::object();
+    }
+    
+    gltf["extensions"]["KHR_animation_mixer"] = nlohmann::json::array();
+
+    for (const auto& mixer : mixers) {
+        nlohmann::json mixerJson = {
+            {"name", mixer.name},
+            {"animations", mixer.animations},
+            {"weights", mixer.weights},
+            {"duration", mixer.duration},
+            {"blendMode", mixer.blendMode}
+        };
+        
+        gltf["extensions"]["KHR_animation_mixer"].push_back(mixerJson);
+    }
+
+    // 添加扩展到扩展列表
+    if (gltf.find("extensionsUsed") == gltf.end()) {
+        gltf["extensionsUsed"] = nlohmann::json::array();
+    }
+    if (std::find(gltf["extensionsUsed"].begin(), 
+                  gltf["extensionsUsed"].end(), 
+                  "KHR_animation_mixer") == gltf["extensionsUsed"].end()) {
+        gltf["extensionsUsed"].push_back("KHR_animation_mixer");
     }
 }
 
-void Osgb2B3dm::addAnimationEventsToGltf(nlohmann::json& gltf,
-                                        const std::vector<AnimationEvent>& events) {
-    if (events.empty()) return;
+void Osgb2B3dm::addSkinningDataToGltf(nlohmann::json& gltf,
+                                     const SkinData& skinData,
+                                     const std::string& meshName) {
+    if (skinData.joints.empty() || skinData.weights.empty()) return;
 
-    // 添加动画事件扩展
-    gltf["extensions"]["KHR_animation_events"] = nlohmann::json::array();
+    // 找到对应的网格
+    int meshIndex = -1;
+    for (size_t i = 0; i < gltf["meshes"].size(); ++i) {
+        if (gltf["meshes"][i]["name"] == meshName) {
+            meshIndex = i;
+            break;
+        }
+    }
+    if (meshIndex == -1) return;
+
+    // 添加关节索引和权重属性
+    nlohmann::json& primitive = gltf["meshes"][meshIndex]["primitives"][0];
     
-    for (const auto& event : events) {
-        nlohmann::json eventJson = {
-            {"name", event.name},
-            {"time", event.time},
-            {"type", event.type},
-            {"data", event.data}
-        };
-        gltf["extensions"]["KHR_animation_events"].push_back(eventJson);
+    // 创建关节索引访问器
+    std::vector<float> jointIndices;
+    jointIndices.reserve(skinData.joints.size());
+    for (const auto& index : skinData.joints) {
+        jointIndices.push_back(static_cast<float>(index));
+    }
+    int jointsAccessor = createAccessor(gltf, jointIndices, "VEC4", 5123);  // UNSIGNED_SHORT
+    primitive["attributes"]["JOINTS_0"] = jointsAccessor;
+
+    // 创建权重访问器
+    int weightsAccessor = createAccessor(gltf, skinData.weights, "VEC4", 5126);  // FLOAT
+    primitive["attributes"]["WEIGHTS_0"] = weightsAccessor;
+}
+
+// 辅助函数实现
+osg::Quat Osgb2B3dm::matrixToQuaternion(const osg::Matrix& matrix) {
+    osg::Quat quat;
+    matrix.get(quat);
+    return quat;
+}
+
+osg::Vec3 Osgb2B3dm::matrixToScale(const osg::Matrix& matrix) {
+    return matrix.getScale();
+}
+
+osg::Vec3 Osgb2B3dm::matrixToTranslation(const osg::Matrix& matrix) {
+    return matrix.getTrans();
+}
+
+void Osgb2B3dm::normalizeWeights(std::vector<float>& weights) {
+    for (size_t i = 0; i < weights.size(); i += 4) {
+        float sum = weights[i] + weights[i+1] + weights[i+2] + weights[i+3];
+        if (sum > 0.0f) {
+            weights[i] /= sum;
+            weights[i+1] /= sum;
+            weights[i+2] /= sum;
+            weights[i+3] /= sum;
+        }
     }
 }
 
@@ -610,6 +979,22 @@ nlohmann::json Osgb2B3dm::generateGltfJson(const std::vector<float>& positions,
     // 添加动画事件
     addAnimationEventsToGltf(gltf, _animationEvents);
 
+    // 添加骨骼
+    for (const auto& skeleton : _skeletons) {
+        addSkeletonToGltf(gltf, skeleton);
+    }
+
+    // 添加骨骼动画
+    addSkeletonAnimationToGltf(gltf, _skeletonChannels);
+
+    // 添加动画混合器
+    addAnimationMixerToGltf(gltf, _animationMixers);
+
+    // 添加蒙皮数据
+    for (size_t i = 0; i < _skinData.size(); ++i) {
+        addSkinningDataToGltf(gltf, _skinData[i], "mesh_" + std::to_string(i));
+    }
+
     return gltf;
 }
 
@@ -769,4 +1154,189 @@ int Osgb2B3dm::getTextureIndex(const std::vector<std::string>& texturePaths,
     if (path.empty()) return -1;
     auto it = std::find(texturePaths.begin(), texturePaths.end(), path);
     return (it != texturePaths.end()) ? std::distance(texturePaths.begin(), it) : -1;
+}
+
+// 添加辅助函数
+int Osgb2B3dm::createAccessor(nlohmann::json& gltf, 
+                             const std::vector<float>& data, 
+                             const std::string& type,
+                             int componentType) {
+    if (data.empty()) return -1;
+
+    // 创建缓冲视图
+    if (gltf.find("bufferViews") == gltf.end()) {
+        gltf["bufferViews"] = nlohmann::json::array();
+    }
+    int bufferViewIndex = gltf["bufferViews"].size();
+
+    gltf["bufferViews"].push_back({
+        {"buffer", 0},
+        {"byteOffset", 0},  // 需要在打包二进制数据时更新
+        {"byteLength", data.size() * sizeof(float)}
+    });
+
+    // 创建访问器
+    if (gltf.find("accessors") == gltf.end()) {
+        gltf["accessors"] = nlohmann::json::array();
+    }
+    int accessorIndex = gltf["accessors"].size();
+
+    nlohmann::json accessor = {
+        {"bufferView", bufferViewIndex},
+        {"componentType", componentType ? componentType : 5126},  // FLOAT
+        {"count", type == "MAT4" ? data.size() / 16 : 
+                 type == "VEC4" ? data.size() / 4 :
+                 type == "VEC3" ? data.size() / 3 :
+                 type == "VEC2" ? data.size() / 2 : data.size()},
+        {"type", type}
+    };
+
+    // 添加最小值和最大值
+    if (type != "MAT4") {
+        std::vector<float> minValues, maxValues;
+        int components = type == "VEC4" ? 4 :
+                        type == "VEC3" ? 3 :
+                        type == "VEC2" ? 2 : 1;
+        
+        for (int i = 0; i < components; ++i) {
+            float minVal = std::numeric_limits<float>::max();
+            float maxVal = std::numeric_limits<float>::lowest();
+            
+            for (size_t j = i; j < data.size(); j += components) {
+                minVal = std::min(minVal, data[j]);
+                maxVal = std::max(maxVal, data[j]);
+            }
+            
+            minValues.push_back(minVal);
+            maxValues.push_back(maxVal);
+        }
+        
+        accessor["min"] = minValues;
+        accessor["max"] = maxValues;
+    }
+
+    gltf["accessors"].push_back(accessor);
+    return accessorIndex;
+}
+
+int Osgb2B3dm::findNodeIndex(const nlohmann::json& gltf, const std::string& nodeName) {
+    if (gltf.find("nodes") == gltf.end()) return -1;
+
+    for (size_t i = 0; i < gltf["nodes"].size(); ++i) {
+        if (gltf["nodes"][i].find("name") != gltf["nodes"][i].end() &&
+            gltf["nodes"][i]["name"] == nodeName) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void Osgb2B3dm::addMorphTargetsToGltf(nlohmann::json& gltf,
+                                     const std::vector<MorphTarget>& morphTargets) {
+    if (morphTargets.empty()) return;
+
+    // 确保存在 meshes
+    if (gltf.find("meshes") == gltf.end() || gltf["meshes"].empty()) return;
+
+    // 获取第一个网格的第一个图元
+    nlohmann::json& primitive = gltf["meshes"][0]["primitives"][0];
+
+    // 添加变形目标
+    primitive["targets"] = nlohmann::json::array();
+    for (const auto& target : morphTargets) {
+        nlohmann::json morphTarget;
+
+        // 添加位置
+        if (!target.positions.empty()) {
+            morphTarget["POSITION"] = createAccessor(gltf, target.positions, "VEC3");
+        }
+
+        // 添加法线
+        if (!target.normals.empty()) {
+            morphTarget["NORMAL"] = createAccessor(gltf, target.normals, "VEC3");
+        }
+
+        primitive["targets"].push_back(morphTarget);
+    }
+
+    // 添加权重
+    if (!morphTargets[0].weights.empty()) {
+        gltf["meshes"][0]["weights"] = morphTargets[0].weights;
+    }
+}
+
+void Osgb2B3dm::addMorphAnimationsToGltf(nlohmann::json& gltf,
+                                        const std::vector<Animation>& animations) {
+    if (animations.empty()) return;
+
+    if (gltf.find("animations") == gltf.end()) {
+        gltf["animations"] = nlohmann::json::array();
+    }
+
+    for (const auto& anim : animations) {
+        nlohmann::json animation = {
+            {"name", anim.name},
+            {"channels", nlohmann::json::array()},
+            {"samplers", nlohmann::json::array()}
+        };
+
+        // 添加采样器和通道
+        for (size_t i = 0; i < anim.channels.size() && i < anim.samplers.size(); ++i) {
+            const std::string& channelId = anim.channels[i];
+            const AnimationSampler& sampler = _animationSamplers[i];
+
+            // 添加采样器
+            int samplerIndex = animation["samplers"].size();
+            animation["samplers"].push_back({
+                {"input", createAccessor(gltf, sampler.input, "SCALAR")},
+                {"output", createAccessor(gltf, sampler.output, "SCALAR")},
+                {"interpolation", sampler.interpolation}
+            });
+
+            // 添加通道
+            animation["channels"].push_back({
+                {"sampler", samplerIndex},
+                {"target", {
+                    {"node", 0},  // 假设目标是第一个节点
+                    {"path", "weights"}
+                }}
+            });
+        }
+
+        gltf["animations"].push_back(animation);
+    }
+}
+
+void Osgb2B3dm::addAnimationEventsToGltf(nlohmann::json& gltf,
+                                        const std::vector<AnimationEvent>& events) {
+    if (events.empty()) return;
+
+    // 添加事件扩展
+    if (gltf.find("extensions") == gltf.end()) {
+        gltf["extensions"] = nlohmann::json::object();
+    }
+
+    gltf["extensions"]["KHR_animation_events"] = {
+        {"events", nlohmann::json::array()}
+    };
+
+    // 添加事件
+    for (const auto& event : events) {
+        gltf["extensions"]["KHR_animation_events"]["events"].push_back({
+            {"name", event.name},
+            {"time", event.time},
+            {"type", event.type},
+            {"data", event.data}
+        });
+    }
+
+    // 添加扩展到扩展列表
+    if (gltf.find("extensionsUsed") == gltf.end()) {
+        gltf["extensionsUsed"] = nlohmann::json::array();
+    }
+    if (std::find(gltf["extensionsUsed"].begin(),
+                  gltf["extensionsUsed"].end(),
+                  "KHR_animation_events") == gltf["extensionsUsed"].end()) {
+        gltf["extensionsUsed"].push_back("KHR_animation_events");
+    }
 }

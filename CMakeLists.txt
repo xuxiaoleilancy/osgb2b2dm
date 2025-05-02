@@ -9,6 +9,7 @@ find_package(OpenSceneGraph REQUIRED COMPONENTS
     osg
     osgDB
     osgAnimation
+    osgUtil
 )
 find_package(nlohmann_json REQUIRED)
 
@@ -29,4 +30,9 @@ target_link_libraries(osgb2b3dm PRIVATE
     ${OPENSCENEGRAPH_LIBRARIES}
     nlohmann_json::nlohmann_json
     z
+)
+
+# 添加编译选项
+target_compile_definitions(osgb2b3dm PRIVATE
+    OSG_ANIMATION_SUPPORT=1
 )

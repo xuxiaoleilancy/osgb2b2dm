@@ -3,6 +3,8 @@
 
 #include <string>
 #include <vector>
+#include <map>
+#include <limits>
 #include <osg/Node>
 #include <osg/Geometry>
 #include <osg/Texture>
@@ -13,7 +15,22 @@
 #include <osg/MatrixTransform>
 #include <osgAnimation/MorphGeometry>
 #include <osgAnimation/AnimationUpdateCallback>
+#include <osgAnimation/Skeleton>
+#include <osgAnimation/Bone>
+#include <osgAnimation/RigGeometry>
+#include <osgAnimation/BasicAnimationManager>
+#include <osgAnimation/Animation>
+#include <osgAnimation/Channel>
+#include <osgAnimation/Sampler>
 #include <nlohmann/json.hpp>
+
+namespace {
+    // 骨骼动画相关类型定义
+    typedef osgAnimation::TemplateKeyframeContainer<osg::Vec3d> Vec3KeyframeContainer;
+    typedef osgAnimation::TemplateKeyframeContainer<osg::Quat> QuatKeyframeContainer;
+    typedef osgAnimation::TemplateSphericalLinearInterpolator<osg::Quat> QuatInterpolator;
+    typedef osgAnimation::TemplateLinearInterpolator<osg::Vec3d> Vec3Interpolator;
+}
 
 class Osgb2B3dm {
 public:
@@ -108,6 +125,50 @@ private:
         nlohmann::json data;
     };
 
+    // 骨骼结构体
+    struct Joint {
+        std::string name;
+        int parentIndex = -1;
+        osg::Matrix inverseBindMatrix;
+        osg::Matrix localMatrix;
+        std::vector<int> children;
+        osgAnimation::Bone* bone = nullptr;  // 对应的OSG骨骼节点
+    };
+
+    // 骨骼动画通道
+    struct SkeletonAnimationChannel {
+        std::string jointName;
+        std::string path;  // translation, rotation, scale
+        std::vector<float> times;
+        std::vector<float> values;
+        std::string interpolation = "LINEAR";
+    };
+
+    // 骨骼结构
+    struct Skeleton {
+        std::string name;
+        std::vector<Joint> joints;
+        int rootJoint = -1;
+        std::vector<osg::Matrix> inverseBindMatrices;
+        osgAnimation::Skeleton* osgSkeleton = nullptr;  // 对应的OSG骨骼
+    };
+
+    // 动画混合器
+    struct AnimationMixer {
+        std::string name;
+        std::vector<std::string> animations;
+        std::vector<float> weights;
+        float duration = 0.0f;
+        std::string blendMode = "ADDITIVE";  // ADDITIVE or OVERRIDE
+    };
+
+    // 蒙皮数据
+    struct SkinData {
+        std::vector<int> joints;
+        std::vector<float> weights;
+        int maxInfluences = 4;  // 每个顶点最大影响骨骼数
+    };
+
     // 读取 OSGB 文件
     osg::ref_ptr<osg::Node> readOsgb(const std::string& path);
 
@@ -170,12 +231,45 @@ private:
     int getTextureIndex(const std::vector<std::string>& texturePaths, 
                        const std::string& path);
 
+    // 骨骼动画相关函数
+    void extractSkeletonData(osg::Node* node);
+    void processSkeletonAnimation(osg::Node* node, const std::string& nodeName);
+    void extractJointHierarchy(osgAnimation::Skeleton* skeleton, Skeleton& outSkeleton);
+    void processAnimationMixer(osg::Node* node);
+    void extractSkinningData(osgAnimation::RigGeometry* rigGeometry, SkinData& outSkinData);
+    void processBoneAnimation(osgAnimation::Bone* bone, const std::string& skeletonName);
+    
+    // 添加骨骼动画到glTF
+    void addSkeletonToGltf(nlohmann::json& gltf, const Skeleton& skeleton);
+    void addSkeletonAnimationToGltf(nlohmann::json& gltf, 
+                                   const std::vector<SkeletonAnimationChannel>& channels);
+    void addAnimationMixerToGltf(nlohmann::json& gltf, 
+                                const std::vector<AnimationMixer>& mixers);
+    void addSkinningDataToGltf(nlohmann::json& gltf, 
+                              const SkinData& skinData,
+                              const std::string& meshName);
+
+    // 辅助函数
+    int createAccessor(nlohmann::json& gltf, 
+                      const std::vector<float>& data, 
+                      const std::string& type,
+                      int componentType = 0);
+    int findNodeIndex(const nlohmann::json& gltf, const std::string& nodeName);
+    osg::Quat matrixToQuaternion(const osg::Matrix& matrix);
+    osg::Vec3 matrixToScale(const osg::Matrix& matrix);
+    osg::Vec3 matrixToTranslation(const osg::Matrix& matrix);
+    void normalizeWeights(std::vector<float>& weights);
+
     std::vector<Material> _materials;  // 存储提取的材质
     std::vector<Animation> _animations; // 存储提取的动画
     std::vector<AnimationChannel> _animationChannels; // 存储动画通道
     std::vector<AnimationSampler> _animationSamplers; // 存储动画采样器
     std::vector<MorphTarget> _morphTargets; // 存储变形目标
     std::vector<AnimationEvent> _animationEvents; // 存储动画事件
+    std::vector<Skeleton> _skeletons;
+    std::vector<SkeletonAnimationChannel> _skeletonChannels;
+    std::vector<AnimationMixer> _animationMixers;
+    std::vector<SkinData> _skinData;
 };
 
 #endif // OSGB2B3DM_H
